@@ -34,6 +34,10 @@ def main():
         "--output", "--option", "--outout", dest="output", default=".",
         help="Work directory for saving and creating files (default: .)"
     )
+    scrape_parser.add_argument(
+        "--proxy", default=None,
+        help="Use proxy for scraper (e.g. 'true' or custom proxy URL)"
+    )
     
     # 2. Translate Command
     translate_parser = subparsers.add_parser("translate", help="Translate scraped chapters using Gemini or DeepSeek API")
@@ -108,6 +112,10 @@ def main():
         "--output", "--option", "--outout", dest="output", default=".",
         help="Work directory for saving and creating files (default: .)"
     )
+    all_parser.add_argument(
+        "--proxy", default=None,
+        help="Use proxy for scraper (e.g. 'true' or custom proxy URL)"
+    )
     
     args = parser.parse_args()
     
@@ -118,7 +126,8 @@ def main():
             title_selector=args.title_selector,
             content_selector=args.content_selector,
             next_selector=args.next_selector,
-            output_dir=args.output
+            output_dir=args.output,
+            proxy=args.proxy
         )
     elif args.command == "translate":
         run_translation(model=args.model, ai=args.ai, output_dir=args.output)
@@ -138,7 +147,8 @@ def main():
             title_selector=args.title_selector,
             content_selector=args.content_selector,
             next_selector=args.next_selector,
-            output_dir=args.output
+            output_dir=args.output,
+            proxy=args.proxy
         )
         
         print("\n[*] --- STAGE 2: Translating chapters ---")

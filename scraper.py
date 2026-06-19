@@ -145,7 +145,7 @@ def scrape_novel_chapter(page, title_selector=None, content_selector=None, next_
             
     return title, cleaned_content, next_url
 
-def run_scraper(start_url, load_limit, title_selector=None, content_selector=None, next_selector=None, output_dir="."):
+def run_scraper(start_url, load_limit, title_selector=None, content_selector=None, next_selector=None, output_dir=".", proxy=None):
     """
     Main entry point to run the Playwright scraper sequential loop.
     """
@@ -158,8 +158,17 @@ def run_scraper(start_url, load_limit, title_selector=None, content_selector=Non
         print(f"[*] Work directory set to: {output_dir}")
         
     with sync_playwright() as p:
-        # Launch Chromium headless
-        browser = p.chromium.launch(headless=True)
+        # Launch Chromium headless with optional proxy
+        browser_args = {}
+        if proxy:
+            if proxy.lower() == "true":
+                proxy_server = "http://siph-mmswg01.siph.com:8080"
+            else:
+                proxy_server = proxy
+            browser_args["proxy"] = {"server": proxy_server}
+            print(f"[*] Playwright launcher configured with proxy: {proxy_server}")
+            
+        browser = p.chromium.launch(headless=True, **browser_args)
         # Create browser context with common user-agent to bypass basic scrape protection
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
