@@ -1,8 +1,11 @@
 import os
 import re
 import time
+# pyrefly: ignore [missing-import]
 from bs4 import BeautifulSoup
+# pyrefly: ignore [missing-import]
 from playwright.sync_api import sync_playwright
+# pyrefly: ignore [missing-import]
 from utils import get_next_running_number, sanitize_filename, draw_progress_bar
 
 # Default list of selectors to try for novel title, content, and next links
