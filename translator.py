@@ -84,7 +84,7 @@ def call_gemini_api(system_prompt: str, prompt_text: str, api_key: str, model="g
     except Exception as e:
         raise RuntimeError(f"Error calling Gemini API: {e}")
 
-def call_deepseek_api(system_prompt: str, prompt_text: str, api_key: str, model="deepseek-v4-flash") -> str:
+def call_deepseek_api(system_prompt: str, prompt_text: str, api_key: str, model="deepseek-v4-flash") -> tuple:
     """
     Makes a direct HTTP POST request to the DeepSeek API using urllib.
     Avoids heavy external dependencies.
@@ -120,7 +120,8 @@ def call_deepseek_api(system_prompt: str, prompt_text: str, api_key: str, model=
             # Extract generated text from chat completion structure
             if "choices" in res_json and len(res_json["choices"]) > 0:
                 text = res_json["choices"][0]["message"]["content"]
-                return text
+                usage = res_json.get("usage", {})
+                return text, usage
             elif "error" in res_json:
                 err_msg = res_json["error"].get("message", "Unknown error")
                 err_type = res_json["error"].get("type", "Unknown type")
@@ -147,8 +148,8 @@ def parse_gemini_response(response_text: str):
     glossary = []
     content_text = response_text
     
-    # Extract GLOSSARY block if present
-    glossary_match = re.search(r"GLOSSARY:\s*(\[.*?\])", response_text, re.DOTALL | re.IGNORECASE)
+    # Extract GLOSSARY block if present (supporting optional markdown code blocks)
+    glossary_match = re.search(r"GLOSSARY:\s*(?:```json\s*)?(\[.*?\])(?:\s*```)?", response_text, re.DOTALL | re.IGNORECASE)
     if glossary_match:
         try:
             glossary = json.loads(glossary_match.group(1).strip())
@@ -185,6 +186,28 @@ def parse_gemini_response(response_text: str):
             return filename, content, glossary
         else:
             return None, content_text.strip(), glossary
+
+def parse_json_array(text: str):
+    """
+    Extracts and parses a JSON array from response text, supporting markdown blocks.
+    """
+    match = re.search(r"(\[.*?\])", text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(1).strip())
+        except Exception as e:
+            print(f"[!] Warning: Could not parse JSON array: {e}")
+    return []
+
+def get_relevant_glossary(content, complete_glossary, max_terms=100):
+    """เลือกเฉพาะคำศัพท์ที่ปรากฏในเนื้อหา"""
+    relevant = {}
+    for term, trans in complete_glossary.items():
+        if term in content:
+            relevant[term] = trans
+            if len(relevant) >= max_terms:
+                break
+    return relevant
 
 def partition_files(files, batch_size=10, merge_threshold=4):
     """
@@ -293,256 +316,257 @@ def run_translation(model=None, ai="gemini", output_dir="."):
     max_passes = 5
     pass_count = 1
     
+    # Find all untranslated source markdown files initially
+    all_files = glob.glob(os.path.join(output_dir, "*.md"))
+    scraped_files = []
+    for f in all_files:
+        basename = os.path.basename(f)
+        if re.match(r"^\d{4}_", basename) and basename != "gemini.md":
+            scraped_files.append(f)
+    scraped_files.sort()
+
+    # Pass 1: Glossary Extraction
+    complete_glossary_path = os.path.join(output_dir, "complete_glossary.json")
+    complete_glossary = {}
+    if os.path.exists(complete_glossary_path):
+        try:
+            with open(complete_glossary_path, "r", encoding="utf-8") as f:
+                complete_glossary = json.load(f)
+            print(f"[*] Loaded existing complete glossary with {len(complete_glossary)} terms.")
+        except Exception as e:
+            print(f"[!] Warning: Could not load complete_glossary.json: {e}")
+    elif glossary_dict:
+        complete_glossary = glossary_dict.copy()
+        print(f"[*] Initialized complete glossary from glossary.json with {len(complete_glossary)} terms.")
+
+    state_path = os.path.join(output_dir, "extraction_state.json")
+    processed_files = []
+    if os.path.exists(state_path):
+        try:
+            with open(state_path, "r", encoding="utf-8") as f:
+                state_data = json.load(f)
+                processed_files = state_data.get("processed_files", [])
+            print(f"[*] Loaded Pass 1 progress: {len(processed_files)} files already processed.")
+        except Exception as e:
+            print(f"[!] Warning: Could not load extraction_state.json: {e}")
+
+    # Determine files to extract terms from
+    files_to_extract = [f for f in scraped_files if f not in processed_files]
+    if files_to_extract:
+        print(f"[*] Pass 1: Extracting glossary terms from {len(files_to_extract)} files...")
+        
+        # Determine extraction API (prefer Gemini 2.5 Flash if key is available)
+        ext_api_key = get_gemini_api_key()
+        if ext_api_key and "your_gemini_api_key" not in ext_api_key:
+            ext_ai = "gemini"
+            ext_model = "gemini-2.5-flash"
+        else:
+            ext_api_key = os.getenv("DEEPSEEK_API_KEY")
+            if ext_api_key:
+                ext_ai = "deepseek"
+                ext_model = model if ai == "deepseek" else "deepseek-v4-flash"
+            else:
+                ext_ai = ai
+                ext_api_key = api_key
+                ext_model = model
+
+        extraction_batches = partition_files(files_to_extract, batch_size=10, merge_threshold=4)
+        for eb_idx, e_batch in enumerate(extraction_batches):
+            print(f"\n[*] Processing extraction batch {eb_idx + 1}/{len(extraction_batches)} (Size: {len(e_batch)} files)...")
+            combined_text = ""
+            for filepath in e_batch:
+                try:
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        combined_text += f.read() + "\n"
+                except Exception as e:
+                    print(f"[!] Error reading {filepath} for glossary extraction: {e}")
+
+            user_prompt_extract = f"[MODE: EXTRACT]\n{combined_text}"
+            print(f"[*] Sending combined text to {ext_ai} ({ext_model}) for glossary extraction ({len(user_prompt_extract)} chars)...")
+            try:
+                if ext_ai == "gemini":
+                    raw_ext = call_gemini_api(system_prompt, user_prompt_extract, ext_api_key, ext_model)
+                else:
+                    raw_ext, _ = call_deepseek_api(system_prompt, user_prompt_extract, ext_api_key, ext_model)
+
+                extracted_list = parse_json_array(raw_ext)
+                print(f"[✓] Extracted {len(extracted_list)} glossary terms from this batch.")
+
+                added_terms = 0
+                for item in extracted_list:
+                    zh = item.get("source", "").strip()
+                    th = item.get("target", "").strip()
+                    if zh and th:
+                        if complete_glossary.get(zh) != th:
+                            complete_glossary[zh] = th
+                            added_terms += 1
+
+                processed_files.extend(e_batch)
+                
+                # Save progress every batch of 10 files
+                with open(complete_glossary_path, "w", encoding="utf-8") as f:
+                    json.dump(complete_glossary, f, ensure_ascii=False, indent=2)
+                with open(state_path, "w", encoding="utf-8") as f:
+                    json.dump({"processed_files": processed_files}, f, ensure_ascii=False, indent=2)
+                print(f"[✓] Saved Pass 1 progress. Total terms in complete glossary: {len(complete_glossary)}.")
+
+            except Exception as e:
+                print(f"[!] Error extracting glossary: {e}")
+                print("[*] Progress saved. You can rerun the script to resume.")
+                return
+
+    # Pass 2: Unified Translation
+    if os.path.exists(complete_glossary_path):
+        try:
+            with open(complete_glossary_path, "r", encoding="utf-8") as f:
+                complete_glossary = json.load(f)
+        except Exception as e:
+            print(f"[!] Error loading complete_glossary.json: {e}")
+
+    total_prompt_tokens = 0
+    total_cache_hit_tokens = 0
+    max_passes = 5
+    pass_count = 1
+
     while True:
-        # Find all source markdown files (files starting with a 4-digit number, e.g. 0001_title.md)
+        # Find all untranslated source markdown files (files starting with a 4-digit number, e.g. 0001_title.md)
         all_files = glob.glob(os.path.join(output_dir, "*.md"))
         scraped_files = []
         for f in all_files:
             basename = os.path.basename(f)
             if re.match(r"^\d{4}_", basename) and basename != "gemini.md":
                 scraped_files.append(f)
-                
+
         if not scraped_files:
             if pass_count == 1:
                 print("[-] No untranslated scraped markdown files found (files matching pattern '000X_*.md').")
             else:
                 print("\n[✓] All chapters successfully translated!")
+                
+            # Clean up state_path upon successful completion
+            if os.path.exists(state_path):
+                try:
+                    os.remove(state_path)
+                    print(f"[*] Cleared Pass 1 progress state: {state_path}")
+                except Exception as e:
+                    print(f"[!] Error clearing {state_path}: {e}")
             break
-            
+
         if pass_count > max_passes:
             print(f"\n[!] Maximum retry passes ({max_passes}) reached. Some files failed to translate:")
             for f in scraped_files:
                 print(f"  - {os.path.basename(f)}")
             break
-            
+
         scraped_files.sort()
         total_files = len(scraped_files)
-        
+
         if pass_count > 1:
             print(f"\n[!] Pass {pass_count}: Retrying {total_files} failed translations...")
-            # Wait 5 seconds to avoid hitting rate limits too quickly
             time.sleep(5)
         else:
-            print(f"[*] Found {total_files} files to translate.")
-            
-        failed_count = 0
+            print(f"[*] Found {total_files} files to translate in Pass 2.")
+
+        # 1. Combine all content of scraped_files to find matching glossary terms for the entire pass
+        combined_all_content = ""
+        for filepath in scraped_files:
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    combined_all_content += f.read() + "\n"
+            except Exception as e:
+                print(f"[!] Error reading {filepath} to find matching glossary: {e}")
+
+        # 2. Get relevant glossary terms for this entire pass (capping at 500 terms)
+        active_glossary = get_relevant_glossary(combined_all_content, complete_glossary, max_terms=500)
         
-        if ai == "deepseek":
-            # Partition files for DeepSeek batching
-            batches = partition_files(scraped_files)
-            processed_count = 0
-            
-            for batch_idx, batch in enumerate(batches):
-                print(f"\n[*] Processing DeepSeek Batch {batch_idx + 1}/{len(batches)} (Size: {len(batch)} files)...")
-                
-                # 1. Combine content of all files in this batch to match against glossary
-                combined_batch_text = ""
-                for filepath in batch:
-                    try:
-                        with open(filepath, "r", encoding="utf-8") as f:
-                            combined_batch_text += f.read() + "\n"
-                    except Exception as e:
-                        print(f"[!] Error reading {filepath} for batch glossary: {e}")
-                
-                # 2. Compare with glossary.json to create a snapshot dictionary
-                snapshot_glossary = {}
-                for zh_term, th_term in glossary_dict.items():
-                    if zh_term in combined_batch_text:
-                        snapshot_glossary[zh_term] = th_term
-                
-                # 3. Write snapshot glossary to snapshot_glossary.json in output_dir
-                snapshot_path = os.path.join(output_dir, "snapshot_glossary.json")
-                try:
-                    with open(snapshot_path, "w", encoding="utf-8") as f:
-                        json.dump(snapshot_glossary, f, ensure_ascii=False, indent=2)
-                    print(f"[✓] Created snapshot_glossary.json with {len(snapshot_glossary)} matching terms for this batch.")
-                except Exception as e:
-                    print(f"[!] Error writing snapshot_glossary.json: {e}")
-                
-                # 4. Translate all files in the current batch
-                for filepath in batch:
-                    processed_count += 1
-                    filename = os.path.basename(filepath)
-                    progress = draw_progress_bar(processed_count, total_files)
-                    print(f"\n[+] Translating {progress}: {filename}...")
-                    
-                    # Get running number prefix (e.g. '0001')
-                    match = re.match(r"^(\d{4})_", filename)
-                    running_prefix = match.group(1) if match else "0000"
-                    
-                    try:
-                        # Read file content
-                        with open(filepath, "r", encoding="utf-8") as f:
-                            content_to_translate = f.read()
-                            
-                        # Load snapshot glossary from snapshot_glossary.json
-                        current_snapshot = {}
-                        if os.path.exists(snapshot_path):
-                            try:
-                                with open(snapshot_path, "r", encoding="utf-8") as sf:
-                                    current_snapshot = json.load(sf)
-                            except Exception as sf_err:
-                                print(f"[!] Warning: Could not read snapshot_glossary.json: {sf_err}. Using in-memory snapshot.")
-                                current_snapshot = snapshot_glossary
-                        else:
-                            current_snapshot = snapshot_glossary
-                            
-                        # Format prompt using sorted snapshot glossary terms (helps prefix caching)
-                        sorted_keys = sorted(current_snapshot.keys())
-                        prompt_with_glossary = content_to_translate
-                        if sorted_keys:
-                            print(f"[*] Found {len(sorted_keys)} glossary terms in snapshot for this batch.")
-                            glossary_instruction = "\n\n=== GLOSSARY REFERENCE (Use these exact translations for consistency) ===\n"
-                            for zh_term in sorted_keys:
-                                glossary_instruction += f"- {zh_term} -> {current_snapshot[zh_term]}\n"
-                            glossary_instruction += "========================================================================\n"
-                            prompt_with_glossary = glossary_instruction + content_to_translate
-                            
-                        print(f"[*] Sending content to DeepSeek ({len(prompt_with_glossary)} chars)...")
-                        raw_response = call_deepseek_api(system_prompt, prompt_with_glossary, api_key, model)
-                        
-                        # Parse response
-                        translated_title, translated_content, new_glossary = parse_gemini_response(raw_response)
-                        
-                        # Decide on translated filename
-                        if not translated_title:
-                            orig_text = filename.replace(f"{running_prefix}_", "", 1).replace(".md", "")
-                            translated_title = f"translated_{orig_text}"
-                            
-                        sanitized_title = sanitize_filename(translated_title)
-                        new_filename = f"{running_prefix}_{sanitized_title}.md"
-                        new_filepath = os.path.join(translate_dir, new_filename)
-                        
-                        # Save translated file directly to translate/
-                        with open(new_filepath, "w", encoding="utf-8") as f:
-                            f.write(translated_content)
-                            
-                        print(f"[✓] Saved translation: translate/{new_filename}")
-                        
-                        # Update glossary dictionary and file
-                        if new_glossary:
-                            added_terms = 0
-                            for item in new_glossary:
-                                zh = item.get("source", "").strip()
-                                th = item.get("target", "").strip()
-                                if zh and th:
-                                    if glossary_dict.get(zh) != th:
-                                        glossary_dict[zh] = th
-                                        added_terms += 1
-                            if added_terms > 0:
-                                try:
-                                    with open(glossary_path, "w", encoding="utf-8") as f:
-                                        json.dump(glossary_dict, f, ensure_ascii=False, indent=2)
-                                    print(f"[✓] Updated glossary.json with {added_terms} new terms (Total: {len(glossary_dict)}).")
-                                except Exception as ge:
-                                    print(f"[!] Error saving glossary.json: {ge}")
-                        
-                        # Move original file to done/
-                        dest_path = os.path.join(done_dir, filename)
-                        shutil.move(filepath, dest_path)
-                        print(f"[*] Moved original file to: {dest_path}")
-                        
-                    except Exception as e:
-                        print(f"[!] Error translating {filename}: {e}")
-                        print("[*] Skipping this file for now...")
-                        failed_count += 1
-                        continue
-                
-                # 5. Clear/Delete snapshot_glossary.json after completing the batch
-                if os.path.exists(snapshot_path):
-                    try:
-                        os.remove(snapshot_path)
-                        print(f"[*] Cleared {snapshot_path}")
-                    except Exception as e:
-                        print(f"[!] Error deleting {snapshot_path}: {e}")
-                        
+        # 3. Build unified system prompt containing guidelines and glossary (static throughout Pass 2 to achieve 100% cache hit)
+        if active_glossary:
+            print(f"[*] Found {len(active_glossary)} matching glossary terms for Pass 2 (from all files in run).")
+            glossary_text = "\n".join([f"- {k} -> {v}" for k, v in sorted(active_glossary.items())])
+            unified_system_prompt = f"""{system_prompt}
+
+# GLOSSARY ที่ต้องใช้ (บังคับ):
+{glossary_text}
+
+คำเตือน: ห้ามเปลี่ยนคำแปลเหล่านี้เด็ดขาด!"""
         else:
-            # Gemini/Standard path (individual file translation and individual glossary search)
-            for idx, filepath in enumerate(scraped_files):
-                filename = os.path.basename(filepath)
-                progress = draw_progress_bar(idx + 1, total_files)
-                print(f"\n[+] Translating {progress}: {filename}...")
+            unified_system_prompt = system_prompt
+
+        failed_count = 0
+
+        # Translate all files individually
+        for idx, filepath in enumerate(scraped_files):
+            filename = os.path.basename(filepath)
+            progress = draw_progress_bar(idx + 1, total_files)
+            print(f"\n[+] Translating {progress}: {filename}...")
+
+            # Get running number prefix (e.g. '0001')
+            match = re.match(r"^(\d{4})_", filename)
+            running_prefix = match.group(1) if match else "0000"
+
+            try:
+                # Read file content
+                with open(filepath, "r", encoding="utf-8") as f:
+                    content_to_translate = f.read()
+
+                user_prompt_translate = f"[MODE: TRANSLATE]\n{content_to_translate}"
+                print(f"[*] Sending content to {ai} ({len(user_prompt_translate)} chars)...")
                 
-                # Get running number prefix (e.g. '0001')
-                match = re.match(r"^(\d{4})_", filename)
-                running_prefix = match.group(1) if match else "0000"
-                
-                try:
-                    # Read file content
-                    with open(filepath, "r", encoding="utf-8") as f:
-                        content_to_translate = f.read()
+                if ai == "deepseek":
+                    raw_response, usage = call_deepseek_api(unified_system_prompt, user_prompt_translate, api_key, model)
+                    # Show cache hit rate if available
+                    if usage and 'prompt_tokens' in usage and usage['prompt_tokens'] > 0:
+                        cache_hit_tokens = usage.get('prompt_cache_hit_tokens', 0)
+                        if cache_hit_tokens == 0 and 'prompt_tokens_details' in usage:
+                            cache_hit_tokens = usage['prompt_tokens_details'].get('cached_tokens', 0)
                         
-                    # Search glossary for terms present in the source text
-                    matching_glossary = []
-                    for zh_term, th_term in glossary_dict.items():
-                        if zh_term in content_to_translate:
-                            matching_glossary.append({"source": zh_term, "target": th_term})
-                    
-                    prompt_with_glossary = content_to_translate
-                    if matching_glossary:
-                        print(f"[*] Found {len(matching_glossary)} matching glossary terms in this chapter.")
-                        glossary_instruction = "\n\n=== GLOSSARY REFERENCE (Use these exact translations for consistency) ===\n"
-                        for item in matching_glossary:
-                            glossary_instruction += f"- {item['source']} -> {item['target']}\n"
-                        glossary_instruction += "========================================================================\n"
-                        prompt_with_glossary = glossary_instruction + content_to_translate
+                        hit_rate = cache_hit_tokens / usage['prompt_tokens']
+                        print(f"[*] Cache Hit Rate: {hit_rate:.1%} ({cache_hit_tokens}/{usage['prompt_tokens']} tokens)")
                         
-                    print(f"[*] Sending content to Gemini ({len(prompt_with_glossary)} chars)...")
-                    raw_response = call_gemini_api(system_prompt, prompt_with_glossary, api_key, model)
-                    
-                    # Parse response
-                    translated_title, translated_content, new_glossary = parse_gemini_response(raw_response)
-                    
-                    # Decide on translated filename
-                    if not translated_title:
-                        orig_text = filename.replace(f"{running_prefix}_", "", 1).replace(".md", "")
-                        translated_title = f"translated_{orig_text}"
-                        
-                    sanitized_title = sanitize_filename(translated_title)
-                    new_filename = f"{running_prefix}_{sanitized_title}.md"
-                    new_filepath = os.path.join(translate_dir, new_filename)
-                    
-                    # Save translated file directly to translate/
-                    with open(new_filepath, "w", encoding="utf-8") as f:
-                        f.write(translated_content)
-                        
-                    print(f"[✓] Saved translation: translate/{new_filename}")
-                    
-                    # Update glossary dictionary and file
-                    if new_glossary:
-                        added_terms = 0
-                        for item in new_glossary:
-                            zh = item.get("source", "").strip()
-                            th = item.get("target", "").strip()
-                            if zh and th:
-                                if glossary_dict.get(zh) != th:
-                                    glossary_dict[zh] = th
-                                    added_terms += 1
-                        if added_terms > 0:
-                            try:
-                                with open(glossary_path, "w", encoding="utf-8") as f:
-                                    json.dump(glossary_dict, f, ensure_ascii=False, indent=2)
-                                print(f"[✓] Updated glossary.json with {added_terms} new terms (Total: {len(glossary_dict)}).")
-                            except Exception as ge:
-                                print(f"[!] Error saving glossary.json: {ge}")
-                    
-                    # Move original file to done/
-                    dest_path = os.path.join(done_dir, filename)
-                    shutil.move(filepath, dest_path)
-                    print(f"[*] Moved original file to: {dest_path}")
-                    
-                except Exception as e:
-                    print(f"[!] Error translating {filename}: {e}")
-                    print("[*] Skipping this file for now...")
-                    failed_count += 1
-                    continue
-                
+                        total_prompt_tokens += usage['prompt_tokens']
+                        total_cache_hit_tokens += cache_hit_tokens
+                else:
+                    # Gemini
+                    raw_response = call_gemini_api(unified_system_prompt, user_prompt_translate, api_key, model)
+
+                # Parse response
+                translated_title, translated_content, new_glossary = parse_gemini_response(raw_response)
+
+                # Decide on translated filename
+                if not translated_title:
+                    orig_text = filename.replace(f"{running_prefix}_", "", 1).replace(".md", "")
+                    translated_title = f"translated_{orig_text}"
+
+                sanitized_title = sanitize_filename(translated_title)
+                new_filename = f"{running_prefix}_{sanitized_title}.md"
+                new_filepath = os.path.join(translate_dir, new_filename)
+
+                # Save translated file directly to translate/
+                with open(new_filepath, "w", encoding="utf-8") as f:
+                    f.write(translated_content)
+
+                print(f"[✓] Saved translation: translate/{new_filename}")
+
+                # Move original file to done/
+                dest_path = os.path.join(done_dir, filename)
+                shutil.move(filepath, dest_path)
+                print(f"[*] Moved original file to: {dest_path}")
+
+            except Exception as e:
+                print(f"[!] Error translating {filename}: {e}")
+                print("[*] Skipping this file for now...")
+                failed_count += 1
+                continue
+
         if failed_count == 0:
-            # All files succeeded in this pass
             break
-            
+
         pass_count += 1
-        
+
+    if ai == "deepseek" and total_prompt_tokens > 0:
+        overall_hit_rate = total_cache_hit_tokens / total_prompt_tokens
+        print(f"\n[✓] Overall Cache Hit Rate: {overall_hit_rate:.1%} ({total_cache_hit_tokens}/{total_prompt_tokens} tokens)")
+
     print("\n[*] Translation stage completed.")
 
 
