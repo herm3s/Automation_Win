@@ -40,19 +40,29 @@
 ## 🚀 วิธีการสั่งรันโปรแกรม (How to Run)
 
 > [!TIP]
-> เพื่อการจัดเก็บข้อมูลที่เป็นระเบียบ แนะนำให้สร้างโฟลเดอร์แยกสำหรับนิยายแต่ละเรื่อง (เช่น `จิงอันโหว/`) นำไฟล์หน้าปก `cover.jpg` (หรือ `cover.png`) และ `glossary.json` ไปใส่ไว้ในโฟลเดอร์นั้น แล้วเปิด Terminal เข้าไปทำงานในโฟลเดอร์ดังกล่าว
+> ปัจจุบันโปรแกรมรองรับตัวเลือก `--option` หรือ `--output` (ระบุที่เก็บไฟล์งาน) ทำให้คุณไม่จำเป็นต้องสลับโฟลเดอร์หรือใช้ `../main.py` ใน Terminal โดยตรง เพียงระบุโฟลเดอร์ปลายทางที่ต้องการเก็บไฟล์งาน (เช่น `D:\Gemini Labs\จิงอันโหว`) ระบบจะคอยสลับและคุมโฟลเดอร์ให้เอง
+
+### โครงสร้างโฟลเดอร์ภายในที่กำหนดโดย `--option` (หรือ `--output`)
+เมื่อรันคำสั่งโดยระบุที่เซฟงานด้วย `--option` หรือ `--output` ระบบจะสร้างและใช้โครงสร้างดังนี้:
+* `[โฟลเดอร์หลัก]` - ใช้เซฟไฟล์ดิบภาษาจีนจากการดึงหน้าเว็บ (Scrape)
+* `[โฟลเดอร์หลัก]/done/` - ใช้ย้ายเก็บไฟล์ดิบภาษาจีนที่ผ่านการแปลเรียบร้อยแล้ว
+* `[โฟลเดอร์หลัก]/translate/` - ใช้เซฟเก็บไฟล์แปลภาษาไทย (.md)
+* `[โฟลเดอร์หลัก]/Audiobook/` - โฟลเดอร์รวมงานเสียง ประกอบด้วย:
+  * ไฟล์เสียงรายตอน `.mp3`
+  * ไฟล์บอกจุดเวลาเริ่มต้นของแต่ละตอน: `timetrack.txt` (สำหรับ Chapters บน YouTube)
+  * ไฟล์รวมบทเสียงยาว: `combined_audiobook.mp3`
+  * ไฟล์วิดีโอนิ่งรวมสมบูรณ์เปิดเล่นได้ทันที: `combined_audiobook.mp4`
+
+---
 
 ### วิธีการรันแบบรวมทุกขั้นตอนรวดเดียว (Stage 1-3)
 คำสั่งนี้จะทำการดึงข้อมูล แปลภาษา และสร้างวิดีโอจัดรวมในคำสั่งเดียว:
 ```bash
-python3 ../main.py all --url "URL_เริ่มต้น" --limit จำนวนตอน --title-selector "CSS_Title" --content-selector "CSS_Content" --next-selector "CSS_Next_Link"
+python main.py all --url "URL_เริ่มต้น" --limit จำนวนตอน --title-selector "CSS_Title" --content-selector "CSS_Content" --next-selector "CSS_Next_Link" --option "โฟลเดอร์ที่เก็บงาน"
 ```
-*ตัวอย่างการรันจริงสำหรับเรื่องจิงอันโหว:*
-```bash
-### บนวินโดว์ ใช้ 
-& "D:\Gemini Labs\Automation\.venv\Scripts\python.exe" "D:\Gemini Labs\Automation\main.py" all --url "https://funs.me/text/17561/15670051.html" --limit 5 --title-selector "td[background*='bgheader']" --content-selector "#ChSize" --next-selector "a.pages" --ai "deepseek"
-### บน MacOS ใช้ command ด้านล่าง
-python3 ../main.py all --url "https://funs.me/text/17561/15670001.html" --limit 5 --title-selector "td[background*='bgheader']" --content-selector "#ChSize" --next-selector "a.pages" --ai "deepseek"
+*ตัวอย่างการรันจริงสำหรับเครื่อง Windows (ผ่าน PowerShell):*
+```powershell
+& "D:\Gemini Labs\Automation\.venv\Scripts\python.exe" "D:\Gemini Labs\Automation\main.py" all --url "https://funs.me/text/17561/15670051.html" --limit 5 --title-selector "td[background*='bgheader']" --content-selector "#ChSize" --next-selector "a.pages" --ai "deepseek" --option "D:\Gemini Labs\จิงอันโหว"
 ```
 
 ---
@@ -60,9 +70,9 @@ python3 ../main.py all --url "https://funs.me/text/17561/15670001.html" --limit 
 ### วิธีการสั่งรันแยกทีละขั้นตอน (Stage-by-Stage)
 
 #### **ขั้นตอนที่ 1: ดึงข้อมูลต้นฉบับภาษาจีน (Scrape)**
-ดึงนิยายตอนภาษาจีนมาเก็บไว้ในเครื่องเป็นไฟล์ `.md` เริ่มจากหน้าแรกและกดต่อไปตาม Link ที่ระบุ:
+ดึงนิยายตอนภาษาจีนมาเก็บไว้ในเครื่องเป็นไฟล์ `.md` เซฟลงโฟลเดอร์งานที่เลือก:
 ```bash
-python3 ../main.py scrape --url "URL_เริ่มต้น" --limit จำนวนตอน --title-selector "CSS_Title" --content-selector "CSS_Content" --next-selector "CSS_Next_Link"
+python main.py scrape --url "URL_เริ่มต้น" --limit จำนวนตอน --title-selector "CSS_Title" --content-selector "CSS_Content" --next-selector "CSS_Next_Link" --option "โฟลเดอร์ที่เก็บงาน"
 ```
 
 #### **ขั้นตอนที่ 2: แปลเนื้อหาเปรียบเทียบคำศัพท์ (Translate) ด้วยกลยุทธ์ Two-Pass Strategy**
@@ -77,7 +87,7 @@ python3 ../main.py scrape --url "URL_เริ่มต้น" --limit จำน
   - แปลเสร็จแล้วระบบจะแสดงผลลัพธ์อัตรา **Cache Hit Rate** ของ DeepSeek รายตอน และจะคำนวณสรุปอัตรา Cache Hit เฉลี่ยรวมให้ที่ปลายทาง
 
 ```bash
-python3 ../main.py translate
+python main.py translate --option "โฟลเดอร์ที่เก็บงาน"
 ```
 * **ตัวเลือกเสริม**:
   * `--ai`: เลือกผู้ให้บริการแปลภาษา ระหว่าง `gemini` หรือ `deepseek` (ค่าเริ่มต้น: `gemini`)
@@ -90,7 +100,7 @@ python3 ../main.py translate
 #### **ขั้นตอนที่ 3: สร้างเสียงและวิดีโอ (Audiobook compilation)**
 แปลงข้อความภาษาไทยที่แปลแล้วให้เป็นไฟล์เสียงทีละตอน รวมเสียงทั้งหมด และสร้างไฟล์วิดีโอ `.mp4` หน้าปกนิ่งสำหรับการอัปโหลดลงสื่อมัลติมีเดีย:
 ```bash
-python3 ../main.py audiobook --combine
+python main.py audiobook --combine --option "โฟลเดอร์ที่เก็บงาน"
 ```
 * **ตัวเลือกเสริม**:
   * `--voice`: ใช้กำหนดรหัสเสียงของ Edge-TTS (ค่าเริ่มต้น: `th-TH-NiwatNeural` สำหรับเสียงผู้ชาย)
