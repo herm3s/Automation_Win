@@ -163,11 +163,8 @@ def run_scraper(start_url, load_limit, title_selector=None, content_selector=Non
     with sync_playwright() as p:
         # Launch Chromium headless with optional proxy
         browser_args = {}
-        if proxy and proxy.lower() != "false":
-            if proxy.lower() == "true":
-                proxy_server = "http://siph-mmswg01.siph.com:8080"
-            else:
-                proxy_server = proxy
+        if proxy and proxy.lower() == "true":
+            proxy_server = "http://siph-mmswg01.siph.com:8080"
             browser_args["proxy"] = {"server": proxy_server}
             print(f"[*] Playwright launcher configured with proxy: {proxy_server}")
             
