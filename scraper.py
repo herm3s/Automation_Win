@@ -1,11 +1,8 @@
 import os
 import re
 import time
-# pyrefly: ignore [missing-import]
 from bs4 import BeautifulSoup
-# pyrefly: ignore [missing-import]
 from playwright.sync_api import sync_playwright
-# pyrefly: ignore [missing-import]
 from utils import get_next_running_number, sanitize_filename, draw_progress_bar
 
 # Default list of selectors to try for novel title, content, and next links
@@ -87,6 +84,8 @@ def scrape_novel_chapter(page, title_selector=None, content_selector=None, next_
         title_element = page.locator(sel).first
         if title_element.is_visible():
             title = title_element.inner_text().strip()
+            # Remove leading hyphens, dashes, underscores, and extra spaces (e.g. " - " -> "")
+            title = re.sub(r'^[-—_\s]+', '', title).strip()
             break
             
     # 2. Try to find the content
@@ -154,12 +153,12 @@ def run_scraper(start_url, load_limit, title_selector=None, content_selector=Non
     """
     print(f"[*] Starting scraper at: {start_url}")
     print(f"[*] Chapters to load: {load_limit}")
+    print(f"[*] Output directory: {output_dir}")
     
-    # Ensure output directory exists
+    # Ensure directory exists
     if output_dir and output_dir != ".":
         os.makedirs(output_dir, exist_ok=True)
-        print(f"[*] Work directory set to: {output_dir}")
-        
+    
     with sync_playwright() as p:
         # Launch Chromium headless with optional proxy
         browser_args = {}
@@ -210,7 +209,7 @@ def run_scraper(start_url, load_limit, title_selector=None, content_selector=Non
                     )
                 
                 # Determine next running number
-                run_num = get_next_running_number(output_dir)
+                run_num = get_next_running_number(directory=output_dir)
                 filename = f"{run_num:04d}_{sanitize_filename(title)}.md"
                 filepath = os.path.join(output_dir, filename)
                 

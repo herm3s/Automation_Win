@@ -81,8 +81,8 @@ def normalize_filename(filename: str) -> str:
     running = m.group(1)   # "0033"
     rest    = m.group(2)   # "บทที่หนึ่งร้อยสามสิบสอง_กล้าที่จะทำกับกล้าที่จะไม่ทำ.md"
 
-    # หา prefix (บทที่/ตอนที่) + ตัวเลขไทย + ส่วนที่เหลือ
-    m2 = re.match(r'^(บทที่|ตอนที่)([^_]+)(_.*)', rest)
+    # หา prefix (บทที่/ตอนที่) + [_\s]? + ตัวเลขไทย/อารบิก + ส่วนที่เหลือ
+    m2 = re.match(r'^(บทที่|ตอนที่)[_\s]?([^_]+)(_.*)', rest)
     if not m2:
         return filename  # ไม่มี prefix → คืนเดิม
 
@@ -92,7 +92,7 @@ def normalize_filename(filename: str) -> str:
 
     # ถ้าเป็นตัวเลขอารบิกอยู่แล้ว ไม่ต้องแปลง
     if re.match(r'^\d+$', thai_num.strip()):
-        return filename
+        return f"{running}_{prefix} {thai_num.strip()}{remainder}"
 
     num = thai_to_int(thai_num.strip())
     if num is None:
@@ -251,7 +251,7 @@ def call_deepseek_api(system_prompt: str, prompt_text: str, api_key: str, model=
 
 def parse_gemini_response(response_text: str):
     """
-    Parses the structured response from Gemini to extract filename, content, and glossary.
+    Parses the structured response from Gemini/DeepSeek to extract filename, content, and glossary.
     """
     glossary = []
     content_text = response_text
@@ -266,34 +266,205 @@ def parse_gemini_response(response_text: str):
         except Exception as e:
             print(f"[!] Warning: Could not parse glossary JSON: {e}")
             
-    # Look for FILENAME: and CONTENT: tags using regex (case-insensitive)
-    match = re.search(r"FILENAME:\s*(.*?)\n+CONTENT:\s*(.*)", content_text, re.DOTALL | re.IGNORECASE)
+    # Parse lines to identify FILENAME/ชื่อไฟล์ and CONTENT/เนื้อหา dynamically
+    filename = None
+    content_lines = []
     
-    if match:
-        filename = match.group(1).strip()
-        content = match.group(2).strip()
-        return filename, content, glossary
-    else:
-        # Fallback if model didn't follow the layout exactly
-        print("[!] Warning: Could not parse response using standard template. Using fallback parser.")
-        # Check if "FILENAME:" is present at all
-        fn_match = re.search(r"FILENAME:\s*(.*)", content_text, re.IGNORECASE)
-        if fn_match:
-            # Split by lines
-            lines = content_text.split("\n")
-            filename = lines[0].replace("FILENAME:", "", 1).strip()
-            # Content is the rest of the lines (excluding FILENAME: line, and CONTENT: if present)
-            rest_lines = []
-            skip_header = True
-            for line in lines[1:]:
-                if "CONTENT:" in line.upper() and skip_header:
-                    skip_header = False
-                    continue
-                rest_lines.append(line)
-            content = "\n".join(rest_lines).strip()
-            return filename, content, glossary
+    filename_pattern = r"^\s*(?:\*\*?|)?(?:FILENAME|ชื่อไฟล์|ชื่อตอน|FILE_NAME|FILE\s+NAME)(?:\*\*?|)?\s*[:：]\s*(.*)"
+    content_header_pattern = r"^\s*(?:\*\*?|)?(?:CONTENT|เนื้อหา|บทแปล)(?:\*\*?|)?\s*[:：]?\s*(?:\*\*?|)?\s*$"
+    
+    filename_regex = re.compile(filename_pattern, re.IGNORECASE)
+    content_header_regex = re.compile(content_header_pattern, re.IGNORECASE)
+    
+    lines = content_text.split("\n")
+    for line in lines:
+        fn_match = filename_regex.match(line)
+        if fn_match and filename is None:
+            filename = fn_match.group(1).strip().strip("*_` \t")
+            continue
+            
+        if content_header_regex.match(line):
+            continue
+            
+        content_lines.append(line)
+        
+    content = "\n".join(content_lines).strip()
+    
+    # Fallback: if filename wasn't found using tag, extract from the first Markdown heading (# Heading)
+    # or the first non-empty short line in the content.
+    if not filename:
+        h_match = re.search(r"^\s*#+\s*(.*)", content, re.MULTILINE)
+        if h_match:
+            filename = h_match.group(1).strip().strip("*_` \t")
         else:
-            return None, content_text.strip(), glossary
+            for line in content.split("\n"):
+                line_strip = line.strip().strip("*_` \t")
+                if line_strip:
+                    if len(line_strip) < 100:
+                        filename = line_strip
+                    break
+            
+def collapse_repeating_punctuation(text: str) -> str:
+    # Collapse 4 or more dots to three dots '...'
+    text = re.sub(r'\.{4,}', '...', text)
+    # Collapse 2 or more Chinese ellipses '……' to three dots '...'
+    text = re.sub(r'…{2,}', '...', text)
+    # Collapse 3 or more dashes '---' to three dots '...'
+    text = re.sub(r'-{3,}', '...', text)
+    # Collapse 2 or more Chinese em-dashes '——' to three dots '...'
+    text = re.sub(r'—{2,}', '...', text)
+    # Collapse 3 or more underscores '___' to three dots '...'
+    text = re.sub(r'_{3,}', '...', text)
+    # Collapse 3 or more asterisks '***' to three dots '...'
+    text = re.sub(r'\*{3,}', '...', text)
+    return text
+
+def clean_translated_content(content: str) -> str:
+    """
+    Cleans special characters and noise from the translated content.
+    """
+    # 1. Remove "# CONTENT:" or "CONTENT:" or "# CONTENT" at the start of a line
+    content = re.sub(r'^\s*#?\s*CONTENT\s*:\s*\n?', '', content, flags=re.IGNORECASE | re.MULTILINE)
+    content = re.sub(r'^\s*#?\s*CONTENT\s*$', '', content, flags=re.IGNORECASE | re.MULTILINE)
+    
+    # 2. Remove "# FILENAME:" or similar if present at the start of a line
+    content = re.sub(r'^\s*#?\s*FILENAME\s*:\s*.*$', '', content, flags=re.IGNORECASE | re.MULTILINE)
+    
+    # 3. Strip '#' header markdown from the beginning of lines (e.g. "# บทที่ 1" -> "บทที่ 1")
+    content = re.sub(r'^#+\s+(.*)$', r'\1', content, flags=re.MULTILINE)
+    
+    # 4. Remove standalone '#' or '##' lines and trailing hashes
+    content = re.sub(r'^\s*#+\s*$', '', content, flags=re.MULTILINE)
+    
+    # 5. Collapse repeating punctuation
+    content = collapse_repeating_punctuation(content)
+    
+    # 6. Remove parenthesized Chinese characters (e.g. 'เหลียวเฉิง (聊城)' -> 'เหลียวเฉิง')
+    content = re.sub(r'\s*\([\u4e00-\u9fff]+\)', '', content)
+    
+    return content.strip()
+
+def has_chinese(text: str) -> bool:
+    return bool(re.search(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]', text))
+
+def translate_line_chinese_to_thai(line: str, api_key: str) -> str:
+    """
+    Translates untranslated Chinese characters in a sentence using Gemini 2.5 Flash.
+    """
+    system_prompt = (
+        "You are an expert Chinese-to-Thai translator. The input sentence is in Thai but contains some untranslated Chinese terms or phrases. "
+        "Translate those Chinese terms into natural, fluent Thai in the context of the sentence. "
+        "Return ONLY the translated Thai sentence. Do not include any explanations, notes, prefix, or markdown."
+    )
+    try:
+        translated = call_gemini_api(system_prompt, line.strip(), api_key, model="gemini-2.5-flash")
+        return translated.strip()
+    except Exception as e:
+        print(f"[!] Warning: Could not translate remaining Chinese in line: {e}")
+        return line
+
+def translate_lines_batch(lines_to_translate: list, api_key: str) -> list:
+    if not lines_to_translate:
+        return []
+        
+    prompt_text = "Translate the following sentences (which contain some untranslated Chinese words) into natural, fluent Thai. Preserve the original meaning. Return the translations as a JSON array of strings in the exact order of the input sentences.\n\nInput sentences:\n"
+    for i, line in enumerate(lines_to_translate):
+        prompt_text += f"{i+1}. {line.strip()}\n"
+        
+    system_prompt = (
+        "You are an expert Chinese-to-Thai translator. "
+        "Translate the input sentences into natural Thai, correcting any Chinese words into Thai. "
+        "Return ONLY a JSON array of strings containing the translated sentences in order, without any markdown formatting or extra text. E.g. [\"sentence1\", \"sentence2\"]"
+    )
+    
+    try:
+        response_text = call_gemini_api(system_prompt, prompt_text, api_key, model="gemini-2.5-flash")
+        match = re.search(r'(\[.*\])', response_text, re.DOTALL)
+        if match:
+            translated_list = json.loads(match.group(1).strip())
+            if len(translated_list) == len(lines_to_translate):
+                print(f"  [✓] Batch translation succeeded for {len(lines_to_translate)} lines.")
+                return [s.strip() for s in translated_list]
+            else:
+                print(f"  [!] Warning: Batch returned {len(translated_list)} lines, expected {len(lines_to_translate)}. Falling back to line-by-line.")
+        else:
+            print("  [!] Warning: Could not find JSON array in response. Falling back to line-by-line.")
+    except Exception as e:
+        print(f"  [!] Batch translation error: {e}. Falling back to line-by-line.")
+        
+    # Fallback to line-by-line
+    results = []
+    for line in lines_to_translate:
+        print(f"    [Line-by-line] translating: {line.strip()}")
+        results.append(translate_line_chinese_to_thai(line, api_key))
+    return results
+
+def translate_remaining_chinese_globally(translate_dir: str, api_key: str):
+    """
+    Scans all translated files in translate_dir, extracts lines with Chinese,
+    batch-translates them, and replaces them back in files.
+    """
+    if not os.path.exists(translate_dir):
+        return
+        
+    files = sorted([os.path.join(translate_dir, f) for f in os.listdir(translate_dir) if f.endswith(".md")])
+    
+    # Map of: line_text -> list of (filepath, line_index)
+    lines_map = {}
+    for filepath in files:
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+        lines = content.split("\n")
+        for idx, line in enumerate(lines):
+            has_unparenthesized_chinese = False
+            if has_chinese(line):
+                stripped_line = re.sub(r'\s*\([\u4e00-\u9fff]+\)', '', line)
+                if has_chinese(stripped_line):
+                    has_unparenthesized_chinese = True
+            
+            if has_unparenthesized_chinese:
+                line_val = line.strip()
+                if line_val:
+                    if line_val not in lines_map:
+                        lines_map[line_val] = []
+                    lines_map[line_val].append((filepath, idx))
+                    
+    if not lines_map:
+        print("[*] No remaining Chinese characters found in any files.")
+        return
+        
+    unique_lines = list(lines_map.keys())
+    print(f"[*] Found {len(unique_lines)} unique lines containing Chinese characters across all files.")
+    
+    # Batch translate unique lines in chunks of 30
+    batch_size = 30
+    translations = {}
+    
+    for i in range(0, len(unique_lines), batch_size):
+        chunk = unique_lines[i:i+batch_size]
+        print(f"[*] Translating batch {i//batch_size + 1}/{(len(unique_lines)-1)//batch_size + 1} (Size: {len(chunk)} lines)...")
+        translated_chunk = translate_lines_batch(chunk, api_key)
+        for orig, trans in zip(chunk, translated_chunk):
+            translations[orig] = trans
+            
+    # Apply translations back to the files
+    file_updates = {}
+    for orig_line, occurrences in lines_map.items():
+        translated_line = translations.get(orig_line, orig_line)
+        for filepath, line_idx in occurrences:
+            if filepath not in file_updates:
+                file_updates[filepath] = {}
+            file_updates[filepath][line_idx] = translated_line
+            
+    for filepath, updates in file_updates.items():
+        with open(filepath, "r", encoding="utf-8") as f:
+            lines = f.read().split("\n")
+        for line_idx, translated_line in updates.items():
+            lines[line_idx] = translated_line
+        new_content = "\n".join(lines)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        print(f"[✓] Applied translations and saved: {os.path.basename(filepath)}")
 
 def parse_json_array(text: str):
     """
@@ -307,7 +478,7 @@ def parse_json_array(text: str):
             print(f"[!] Warning: Could not parse JSON array: {e}")
     return []
 
-def get_relevant_glossary(content, complete_glossary, max_terms=100):
+def get_relevant_glossary(content, complete_glossary, max_terms=500):
     """เลือกเฉพาะคำศัพท์ที่ปรากฏในเนื้อหา"""
     relevant = {}
     for term, trans in complete_glossary.items():
@@ -346,7 +517,6 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
     Retries any failed chapters at the end of the pass before proceeding.
     """
     import time
-    
     global _api_opener
     import ssl
     ssl_context = ssl._create_unverified_context()
@@ -373,7 +543,6 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
     if output_dir and output_dir != ".":
         os.makedirs(output_dir, exist_ok=True)
         print(f"[*] Work directory set to: {output_dir}")
-        
         
     # Resolve API provider and key
     if ai == "gemini":
@@ -449,11 +618,24 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
     if os.path.exists(audiobook_dir):
         rename_files(audiobook_dir, dry_run=False)
         
-    # Retry loop configuration
-    max_passes = 5
-    pass_count = 1
-    
-    # Find all untranslated source markdown files initially
+    # --- PHASE 0: PREPARE ---
+    # 1. Read glossary.json -> complete_glossary (copy all)
+    glossary_path = os.path.join(output_dir, "glossary.json")
+    complete_glossary = {}
+    if os.path.exists(glossary_path):
+        try:
+            with open(glossary_path, "r", encoding="utf-8") as f:
+                complete_glossary = json.load(f)
+            print(f"[*] PHASE 0: Loaded existing glossary with {len(complete_glossary)} terms from glossary.json.")
+        except Exception as e:
+            print(f"[!] Warning: Could not load glossary.json: {e}")
+            if glossary_dict:
+                complete_glossary = glossary_dict.copy()
+    elif glossary_dict:
+        complete_glossary = glossary_dict.copy()
+        print(f"[*] PHASE 0: Initialized complete glossary from memory glossary_dict with {len(complete_glossary)} terms.")
+
+    # 2. Find all untranslated source markdown files (scraped files) to translate
     all_files = glob.glob(os.path.join(output_dir, "*.md"))
     scraped_files = []
     for f in all_files:
@@ -462,20 +644,20 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
             scraped_files.append(f)
     scraped_files.sort()
 
-    # Pass 1: Glossary Extraction
-    complete_glossary_path = os.path.join(output_dir, "complete_glossary.json")
-    complete_glossary = {}
-    if os.path.exists(complete_glossary_path):
+    # 3. Combine content of all files to be translated to filter terms
+    combined_all_content = ""
+    for filepath in scraped_files:
         try:
-            with open(complete_glossary_path, "r", encoding="utf-8") as f:
-                complete_glossary = json.load(f)
-            print(f"[*] Loaded existing complete glossary with {len(complete_glossary)} terms.")
+            with open(filepath, "r", encoding="utf-8") as f:
+                combined_all_content += f.read() + "\n"
         except Exception as e:
-            print(f"[!] Warning: Could not load complete_glossary.json: {e}")
-    elif glossary_dict:
-        complete_glossary = glossary_dict.copy()
-        print(f"[*] Initialized complete glossary from glossary.json with {len(complete_glossary)} terms.")
+            print(f"[!] Error reading {filepath} to find matching glossary: {e}")
 
+    # 4. Filter complete_glossary with the combined content of all files to translate to initialize active_glossary
+    active_glossary = get_relevant_glossary(combined_all_content, complete_glossary, max_terms=500)
+    print(f"[*] PHASE 0: Filtered relevant glossary. Found {len(active_glossary)} matching terms from {len(complete_glossary)} total terms.")
+
+    # --- PHASE 1: EXTRACT GLOSSARY ---
     state_path = os.path.join(output_dir, "extraction_state.json")
     processed_files = []
     if os.path.exists(state_path):
@@ -483,18 +665,18 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
             with open(state_path, "r", encoding="utf-8") as f:
                 state_data = json.load(f)
                 processed_files = state_data.get("processed_files", [])
-            print(f"[*] Loaded Pass 1 progress: {len(processed_files)} files already processed.")
+            print(f"[*] PHASE 1: Loaded extraction progress: {len(processed_files)} files already processed.")
         except Exception as e:
             print(f"[!] Warning: Could not load extraction_state.json: {e}")
 
     # Determine files to extract terms from
     files_to_extract = [f for f in scraped_files if f not in processed_files]
     if files_to_extract:
-        print(f"[*] Pass 1: Extracting glossary terms from {len(files_to_extract)} files...")
+        print(f"[*] PHASE 1: Extracting glossary terms from {len(files_to_extract)} files...")
         
         extraction_batches = partition_files(files_to_extract, batch_size=10, merge_threshold=4)
         for eb_idx, e_batch in enumerate(extraction_batches):
-            print(f"\n[*] Processing extraction batch {eb_idx + 1}/{len(extraction_batches)} (Size: {len(e_batch)} files)...")
+            print(f"\n[*] PHASE 1: Processing extraction batch {eb_idx + 1}/{len(extraction_batches)} (Size: {len(e_batch)} files)...")
             combined_text = ""
             for filepath in e_batch:
                 try:
@@ -503,6 +685,7 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
                 except Exception as e:
                     print(f"[!] Error reading {filepath} for glossary extraction: {e}")
 
+            # Send extract prompt explicitly prompting for terminology extraction (not translation)
             user_prompt_extract = f"[MODE: EXTRACT]\n{combined_text}"
             
             raw_ext = None
@@ -543,36 +726,51 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
                     zh = item.get("source", "").strip()
                     th = item.get("target", "").strip()
                     if zh and th:
+                        # Merge newly extracted terms into complete_glossary
                         if complete_glossary.get(zh) != th:
                             complete_glossary[zh] = th
                             added_terms += 1
+                        # Also merge into active_glossary (since they are in the current files)
+                        active_glossary[zh] = th
 
                 processed_files.extend(e_batch)
                 
-                # Save progress every batch of 10 files
-                with open(complete_glossary_path, "w", encoding="utf-8") as f:
+                # Save progress incrementally to glossary.json
+                with open(glossary_path, "w", encoding="utf-8") as f:
                     json.dump(complete_glossary, f, ensure_ascii=False, indent=2)
                 with open(state_path, "w", encoding="utf-8") as f:
                     json.dump({"processed_files": processed_files}, f, ensure_ascii=False, indent=2)
-                print(f"[✓] Saved Pass 1 progress. Total terms in complete glossary: {len(complete_glossary)}.")
+                print(f"[✓] Saved PHASE 1 progress. Total terms in complete glossary: {len(complete_glossary)}.")
 
             except Exception as e:
                 print(f"[!] Error extracting glossary: {e}")
                 print("[*] Progress saved. You can rerun the script to resume.")
                 return
 
-    # Pass 2: Unified Translation
-    if os.path.exists(complete_glossary_path):
-        try:
-            with open(complete_glossary_path, "r", encoding="utf-8") as f:
-                complete_glossary = json.load(f)
-        except Exception as e:
-            print(f"[!] Error loading complete_glossary.json: {e}")
+    # --- PHASE 2: TRANSLATE ---
+    # Re-filter complete_glossary against combined_all_content to include newly extracted terms
+    active_glossary = get_relevant_glossary(combined_all_content, complete_glossary, max_terms=500)
+    
+    # Build unified system prompt containing guidelines and active glossary (static throughout Pass 2 to achieve 100% cache hit)
+    if active_glossary:
+        print(f"[*] PHASE 2: Found {len(active_glossary)} matching glossary terms for Pass 2 (from all files in run).")
+        glossary_text = "\n".join([f"- {k} -> {v}" for k, v in sorted(active_glossary.items())])
+        unified_system_prompt = f"""{system_prompt}
+
+# GLOSSARY ที่ต้องใช้ (บังคับ):
+{glossary_text}
+
+คำเตือน: ห้ามเปลี่ยนคำแปลเหล่านี้เด็ดขาด!"""
+    else:
+        unified_system_prompt = system_prompt
 
     total_prompt_tokens = 0
     total_cache_hit_tokens = 0
     max_passes = 5
     pass_count = 1
+
+    # Keep a collection of newly discovered glossary terms during translation
+    newly_translated_glossary = {}
 
     while True:
         # Find all untranslated source markdown files (files starting with a 4-digit number, e.g. 0001_title.md)
@@ -588,14 +786,6 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
                 print("[-] No untranslated scraped markdown files found (files matching pattern '000X_*.md').")
             else:
                 print("\n[✓] All chapters successfully translated!")
-                
-            # Clean up state_path upon successful completion
-            if os.path.exists(state_path):
-                try:
-                    os.remove(state_path)
-                    print(f"[*] Cleared Pass 1 progress state: {state_path}")
-                except Exception as e:
-                    print(f"[!] Error clearing {state_path}: {e}")
             break
 
         if pass_count > max_passes:
@@ -613,34 +803,9 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
         else:
             print(f"[*] Found {total_files} files to translate in Pass 2.")
 
-        # 1. Combine all content of scraped_files to find matching glossary terms for the entire pass
-        combined_all_content = ""
-        for filepath in scraped_files:
-            try:
-                with open(filepath, "r", encoding="utf-8") as f:
-                    combined_all_content += f.read() + "\n"
-            except Exception as e:
-                print(f"[!] Error reading {filepath} to find matching glossary: {e}")
-
-        # 2. Get relevant glossary terms for this entire pass (capping at 500 terms)
-        active_glossary = get_relevant_glossary(combined_all_content, complete_glossary, max_terms=500)
-        
-        # 3. Build unified system prompt containing guidelines and glossary (static throughout Pass 2 to achieve 100% cache hit)
-        if active_glossary:
-            print(f"[*] Found {len(active_glossary)} matching glossary terms for Pass 2 (from all files in run).")
-            glossary_text = "\n".join([f"- {k} -> {v}" for k, v in sorted(active_glossary.items())])
-            unified_system_prompt = f"""{system_prompt}
-
-# GLOSSARY ที่ต้องใช้ (บังคับ):
-{glossary_text}
-
-คำเตือน: ห้ามเปลี่ยนคำแปลเหล่านี้เด็ดขาด!"""
-        else:
-            unified_system_prompt = system_prompt
-
         failed_count = 0
 
-        # Translate all files individually
+        # Translate all files individually using the static unified_system_prompt
         for idx, filepath in enumerate(scraped_files):
             filename = os.path.basename(filepath)
             progress = draw_progress_bar(idx + 1, total_files)
@@ -678,6 +843,29 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
                 # Parse response
                 translated_title, translated_content, new_glossary = parse_gemini_response(raw_response)
 
+                # Collect new glossary terms returned by LLM and save incrementally
+                if new_glossary:
+                    print(f"[*] Found {len(new_glossary)} new terms in LLM translation response.")
+                    updated_glossary = False
+                    for item in new_glossary:
+                        zh = item.get("source", "").strip()
+                        th = item.get("target", "").strip()
+                        if zh and th:
+                            newly_translated_glossary[zh] = th
+                            if complete_glossary.get(zh) != th:
+                                complete_glossary[zh] = th
+                                updated_glossary = True
+                    if updated_glossary:
+                        try:
+                            with open(glossary_path, "w", encoding="utf-8") as f:
+                                json.dump(complete_glossary, f, ensure_ascii=False, indent=2)
+                            print(f"[✓] Incrementally saved new terms to glossary.json")
+                        except Exception as e:
+                            print(f"[!] Warning: Could not save glossary.json incrementally: {e}")
+
+                # Clean special characters first
+                translated_content = clean_translated_content(translated_content)
+
                 # Decide on translated filename
                 if not translated_title:
                     orig_text = filename.replace(f"{running_prefix}_", "", 1).replace(".md", "")
@@ -710,9 +898,45 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
 
         pass_count += 1
 
+    # Merge newly translated terms into complete_glossary at the end of translation
+    if newly_translated_glossary:
+        print(f"\n[*] PHASE 2: Merging {len(newly_translated_glossary)} new terms from translation into complete glossary...")
+        for zh, th in newly_translated_glossary.items():
+            complete_glossary[zh] = th
+
     if ai == "deepseek" and total_prompt_tokens > 0:
         overall_hit_rate = total_cache_hit_tokens / total_prompt_tokens
         print(f"\n[✓] Overall Cache Hit Rate: {overall_hit_rate:.1%} ({total_cache_hit_tokens}/{total_prompt_tokens} tokens)")
+
+    # --- PHASE 3: FINALIZE ---
+    # Global scanning and batch translation of any remaining Chinese characters
+    g_key = get_gemini_api_key()
+    if g_key and "your_gemini_api_key" not in g_key:
+        print("[*] PHASE 3: Scanning and batch-translating remaining Chinese characters globally...")
+        translate_remaining_chinese_globally(translate_dir, g_key)
+
+    # Auto-rename existing files to normalize chapter numbers to Arabic numerals
+    print("[*] PHASE 3: Normalizing translated files and audiobooks...")
+    rename_files(translate_dir, dry_run=False)
+    audiobook_dir = os.path.join(output_dir, "Audiobook")
+    if os.path.exists(audiobook_dir):
+        rename_files(audiobook_dir, dry_run=False)
+
+    print(f"\n[*] PHASE 3: Saving final complete glossary (superset) with {len(complete_glossary)} terms to glossary.json...")
+    try:
+        with open(glossary_path, "w", encoding="utf-8") as f:
+            json.dump(complete_glossary, f, ensure_ascii=False, indent=2)
+        print("[✓] Save complete.")
+    except Exception as e:
+        print(f"[!] Error saving final glossary.json: {e}")
+
+    # Clean up state_path upon successful completion
+    if os.path.exists(state_path):
+        try:
+            os.remove(state_path)
+            print(f"[*] Cleared Pass 1 progress state: {state_path}")
+        except Exception as e:
+            print(f"[!] Error clearing {state_path}: {e}")
 
     print("\n[*] Translation stage completed.")
 

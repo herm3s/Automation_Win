@@ -93,8 +93,8 @@ def sanitize_filename(name: str) -> str:
     name = re.sub(r'[\\/*?:"<>|]', "", name)
     # Replace whitespace and newlines with underscores
     name = re.sub(r'\s+', "_", name)
-    # Strip leading/trailing underscores/dots
-    name = name.strip("_.")
+    # Strip leading/trailing underscores/dots/hyphens
+    name = name.strip("_-.")
     return name
 
 def draw_progress_bar(current: int, total: int, width: int = 30) -> str:

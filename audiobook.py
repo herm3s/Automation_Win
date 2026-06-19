@@ -43,25 +43,30 @@ def find_cover_image(directory=".") -> str:
     """
     Searches for a cover image in the directory.
     Looks for files starting with 'cover' first, then falls back to any image file.
+    Also falls back to the parent directory if not found.
     """
+    # Ensure directory is absolute for robust parent fallback checking
+    abs_dir = os.path.abspath(directory)
+    
     # Look for files starting with 'cover'
     cover_patterns = ["cover.jpg", "cover.png", "cover.jpeg", "cover.webp", "cover.*"]
     for pattern in cover_patterns:
-        matches = glob.glob(os.path.join(directory, pattern))
+        matches = glob.glob(os.path.join(abs_dir, pattern))
         if matches:
             return matches[0]
             
     # Fallback: find any image file
     image_extensions = ["*.jpg", "*.jpeg", "*.png", "*.webp"]
     for ext in image_extensions:
-        matches = glob.glob(os.path.join(directory, ext))
+        matches = glob.glob(os.path.join(abs_dir, ext))
         if matches:
             # Return the first one found
             return matches[0]
             
-    # Fallback to parent directory if searching current dir
-    if directory == ".":
-        parent_cover = find_cover_image("..")
+    # Fallback to parent directory
+    parent_dir = os.path.dirname(abs_dir)
+    if parent_dir and parent_dir != abs_dir:
+        parent_cover = find_cover_image(parent_dir)
         if parent_cover:
             return parent_cover
             
@@ -85,7 +90,7 @@ def get_audio_duration(mp3_path: str, ffprobe_bin: str) -> float:
         "-of", "default=noprint_wrappers=1:nokey=1",
         mp3_path
     ]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode == 0:
         try:
             return float(result.stdout.strip())
@@ -97,37 +102,41 @@ def get_audio_duration(mp3_path: str, ffprobe_bin: str) -> float:
 def create_static_video(image_path: str, audio_path: str, output_path: str, ffmpeg_bin: str):
     """
     Creates a highly compatible, resource-efficient .mp4 video using a color filter background
-    and overlaying the cover image on top. Uses standard 720p resolution and CRF 23
-    for a crisp static screen, and transcodes audio to compatible AAC for mobile playback.
+    and overlaying the cover image on top. Uses standard 720p resolution, CRF 23, and a 5 fps
+    frame rate to ensure smooth compatibility with macOS QuickTime, YouTube, and mobile players.
+    Only decodes the cover image once to maximize rendering speed (runs at 10x+ speed).
+    Uses 44.1kHz stereo AAC audio and +faststart flag to guarantee compatibility with QuickTime.
     """
-    # High-compatibility mobile and web playback options:
-    # -f lavfi -i "color=c=black:s=1280x720:r=1": Generates a compatible 1280x720 black video stream at 1 fps
-    # -i image_path: Input cover image
-    # -i audio_path: Input MP3 audio track
-    # -filter_complex: Scales cover image to fit 1280x720 while preserving aspect ratio, and overlays it on the black canvas
-    # -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p: Compress video stream with high quality to ensure sharpness
-    # -c:a aac -b:a 128k: Transcodes audio to universal AAC format for iOS and Android
-    # -shortest: Terminate encoding when audio finishes
+    # -f lavfi -i "color=c=black:s=1280x720:r=5": Generates a 1280x720 black video stream at 5 fps
+    # -i image_path: Input cover image (decoded once, overlaid continuously)
+    # -i audio_path: Input audio track
+    # -shortest: Terminate encoding when the audio finishes
+    # -movflags +faststart: Move metadata to the start of the file for QuickTime compatibility
+    # -ar 44100 -ac 2: Standardize audio sampling rate and channels (stereo)
     cmd = [
         ffmpeg_bin,
         "-y",
         "-f", "lavfi",
-        "-i", "color=c=black:s=1280x720:r=1",
+        "-i", "color=c=black:s=1280x720:r=5",
         "-i", image_path,
         "-i", audio_path,
         "-filter_complex", "[1:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2[img];[0:v][img]overlay=0:0",
         "-c:v", "libx264",
         "-preset", "ultrafast",
+        "-tune", "stillimage",
         "-crf", "23",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "128k",
+        "-ar", "44100",
+        "-ac", "2",
         "-shortest",
+        "-movflags", "+faststart",
         output_path
     ]
     
     print(f"[*] Rendering video: {output_path}")
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"FFmpeg rendering failed: {result.stderr}")
 
@@ -144,21 +153,21 @@ def format_seconds_to_hms(seconds: float) -> str:
 def process_audiobooks(voice="th-TH-PremwadeeNeural", generate_videos=False, output_dir=".", proxy=None):
     """
     Pipeline Step 3:
-    - Finds all translated markdown files (000X_*.md in specified output_dir).
-    - Converts each to MP3.
-    - Moves translated .md files to 'translate/' folder under output_dir.
+    - Finds all translated markdown files (000X_*.md in translate/ folder).
+    - Converts each to MP3 and saves in Audiobook/ folder.
+    - Skips generation if MP3 file already exists.
     - Creates separate static video for each chapter if generate_videos is True.
     - Retries any failed chapters at the end of the pass.
     """
     import time
-    # Create output directory for completed translations
+    # Set directories
     translate_dir = os.path.join(output_dir, "translate")
-    if not os.path.exists(translate_dir):
-        os.makedirs(translate_dir)
-        print(f"[*] Created directory: {translate_dir}/")
-    
-    # Create Audiobook directory for MP3/MP4 output
     audiobook_dir = os.path.join(output_dir, "Audiobook")
+    
+    if not os.path.exists(translate_dir):
+        print(f"[-] Translate directory '{translate_dir}' does not exist. No files to process.")
+        return []
+        
     if not os.path.exists(audiobook_dir):
         os.makedirs(audiobook_dir)
         print(f"[*] Created directory: {audiobook_dir}/")
@@ -176,7 +185,7 @@ def process_audiobooks(voice="th-TH-PremwadeeNeural", generate_videos=False, out
     if generate_videos:
         cover_image = find_cover_image(output_dir)
         if not cover_image:
-            print(f"[!] Warning: No cover image (e.g. cover.jpg, cover.png) found in {output_dir}.")
+            print("[!] Warning: No cover image found in working directory.")
             print("[!] Static video generation skipped. Please add a cover image if you want videos.")
             generate_videos = False
             
@@ -187,8 +196,7 @@ def process_audiobooks(voice="th-TH-PremwadeeNeural", generate_videos=False, out
     pass_count = 1
     
     while True:
-        # Find all translated markdown files from the translate/ subfolder
-        translate_dir = os.path.join(output_dir, "translate")
+        # Find all translated markdown files (files starting with a 4-digit number in translate_dir)
         all_files = glob.glob(os.path.join(translate_dir, "*.md"))
         translated_files = []
         for f in all_files:
@@ -198,7 +206,7 @@ def process_audiobooks(voice="th-TH-PremwadeeNeural", generate_videos=False, out
                 
         if not translated_files:
             if pass_count == 1:
-                print("[-] No translated markdown files found to generate audio (files matching pattern '000X_*.md').")
+                print(f"[-] No translated markdown files found in '{translate_dir}' to generate audio.")
             else:
                 print("\n[✓] All chapters successfully processed to audiobooks!")
             break
@@ -225,19 +233,28 @@ def process_audiobooks(voice="th-TH-PremwadeeNeural", generate_videos=False, out
             name_without_ext = os.path.splitext(filename)[0]
             mp3_filename = f"{name_without_ext}.mp3"
             mp4_filename = f"{name_without_ext}.mp4"
+            
             mp3_filepath = os.path.join(audiobook_dir, mp3_filename)
             mp4_filepath = os.path.join(audiobook_dir, mp4_filename)
             
             progress = draw_progress_bar(idx + 1, total_files)
             print(f"\n[+] Processing {progress}: {filename}...")
             
-            # Check if MP3 already exists — skip TTS if so
+            # Check if MP3 file already exists
             if os.path.exists(mp3_filepath):
-                print(f"[~] Skipping (MP3 already exists): {mp3_filename}")
+                print(f"[✓] Audio file already exists (Skipping): {mp3_filepath}")
                 if mp3_filepath not in generated_mp3s:
                     generated_mp3s.append(mp3_filepath)
+                
+                # Check video if requested
+                if generate_videos and cover_image and not os.path.exists(mp4_filepath):
+                    try:
+                        create_static_video(cover_image, mp3_filepath, mp4_filepath, ffmpeg_bin)
+                        print(f"[✓] Saved video: {mp4_filepath}")
+                    except Exception as ve:
+                        print(f"[!] Error creating video for {mp3_filename}: {ve}")
                 continue
-            
+                
             try:
                 # 1. Read and clean text for TTS
                 with open(filepath, "r", encoding="utf-8") as f:
@@ -255,21 +272,21 @@ def process_audiobooks(voice="th-TH-PremwadeeNeural", generate_videos=False, out
                 elif proxy and (proxy.startswith("http://") or proxy.startswith("https://")):
                     proxy_url = proxy
 
-                # 2. Generate MP3 using edge-tts (saved to Audiobook/)
-                print(f"[*] Generating audio (Voice: {voice}) -> Audiobook/{mp3_filename}")
+                # 2. Generate MP3 using edge-tts
+                print(f"[*] Generating audio (Voice: {voice}) -> {mp3_filepath}")
                 asyncio.run(text_to_speech(clean_text, mp3_filepath, voice, proxy=proxy_url))
-                print(f"[✓] Saved audio: {mp3_filename}")
+                print(f"[✓] Saved audio: {mp3_filepath}")
                 if mp3_filepath not in generated_mp3s:
                     generated_mp3s.append(mp3_filepath)
                 
-                # 3. Create static video if requested (saved to Audiobook/)
+                # 3. Create static video if requested
                 if generate_videos and cover_image:
                     try:
                         create_static_video(cover_image, mp3_filepath, mp4_filepath, ffmpeg_bin)
-                        print(f"[✓] Saved video: {mp4_filename}")
+                        print(f"[✓] Saved video: {mp4_filepath}")
                     except Exception as ve:
                         print(f"[!] Error creating video for {mp3_filename}: {ve}")
-                
+                        
             except Exception as e:
                 print(f"[!] Error processing {filename}: {e}")
                 for temp_file in [mp3_filepath, mp4_filepath]:
@@ -291,24 +308,23 @@ def process_audiobooks(voice="th-TH-PremwadeeNeural", generate_videos=False, out
 
 def compile_audiobook_compilation(voice="th-TH-PremwadeeNeural", output_dir="."):
     """
-    Compiles all chapter MP3 files in the Audiobook/ subfolder into a single
+    Compiles all chapter MP3 files in the Audiobook directory into a single
     audiobook video, generating timestamps (timetrack.txt) for YouTube.
     """
-    # All audio files live in the Audiobook/ subfolder
     audiobook_dir = os.path.join(output_dir, "Audiobook")
     if not os.path.exists(audiobook_dir):
-        os.makedirs(audiobook_dir)
-        print(f"[*] Created directory: {audiobook_dir}/")
-
-    # Find all MP3 chapter files in Audiobook/
+        print(f"[-] Audiobook directory '{audiobook_dir}' does not exist. No files to compile.")
+        return
+        
+    # Find all MP3 files starting with 4-digits inside Audiobook/
     mp3_files = []
     for f in glob.glob(os.path.join(audiobook_dir, "*.mp3")):
         basename = os.path.basename(f)
-        if re.match(r"^\d{4}_", basename):
+        if re.match(r"^\d{4}_", basename) and basename != "combined_audiobook.mp3":
             mp3_files.append(f)
             
     if not mp3_files:
-        print(f"[-] No chapter MP3 files found in Audiobook/ to compile (files matching '000X_*.mp3').")
+        print(f"[-] No chapter MP3 files found in '{audiobook_dir}' to compile (files matching '000X_*.mp3').")
         return
         
     mp3_files.sort()
@@ -322,7 +338,7 @@ def compile_audiobook_compilation(voice="th-TH-PremwadeeNeural", output_dir=".")
         
     cover_image = find_cover_image(output_dir)
     if not cover_image:
-        print(f"[!] Error: A cover image (e.g. cover.jpg, cover.png) is required in {output_dir} to compile the video.")
+        print(f"[!] Error: A cover image is required in '{output_dir}' to compile the video.")
         return
         
     print(f"\n[*] Compiling {len(mp3_files)} chapters into a single audiobook compilation...")
@@ -331,13 +347,13 @@ def compile_audiobook_compilation(voice="th-TH-PremwadeeNeural", output_dir=".")
     cumulative_seconds = 0.0
     timetracks = []
     
-    # Create input list file for FFmpeg concat demuxer (inside Audiobook/)
+    # Create input list file for FFmpeg concat demuxer
     concat_list_path = os.path.join(audiobook_dir, "concat_list.txt")
     with open(concat_list_path, "w", encoding="utf-8") as f:
-        for idx, mp3_file in enumerate(mp3_files):
+        for idx, mp3_filepath in enumerate(mp3_files):
             # Write file entry to concat list (handling single quotes for safety)
-            # Use absolute path for absolute safety with concat demuxer
-            abs_mp3_path = os.path.abspath(mp3_file)
+            # Use absolute path to ensure correct path resolution during ffmpeg execution
+            abs_mp3_path = os.path.abspath(mp3_filepath)
             escaped_filename = abs_mp3_path.replace("'", "'\\''")
             f.write(f"file '{escaped_filename}'\n")
             
@@ -346,17 +362,18 @@ def compile_audiobook_compilation(voice="th-TH-PremwadeeNeural", output_dir=".")
             
             # Extract clean title name from filename
             # e.g., '0001_Chapter_Title.mp3' -> 'Chapter Title'
-            clean_name = os.path.splitext(os.path.basename(mp3_file))[0]
+            mp3_file = os.path.basename(mp3_filepath)
+            clean_name = os.path.splitext(mp3_file)[0]
             clean_name = re.sub(r"^\d{4}_", "", clean_name)
             clean_name = clean_name.replace("_", " ")
             
             timetracks.append(f"{timestamp_str} - {clean_name}")
             
             # Get duration of this MP3
-            duration = get_audio_duration(mp3_file, ffprobe_bin)
+            duration = get_audio_duration(mp3_filepath, ffprobe_bin)
             cumulative_seconds += duration
             
-    # Write timetrack.txt inside Audiobook/
+    # Write timetrack.txt inside Audiobook/ folder
     timetrack_filename = os.path.join(audiobook_dir, "timetrack.txt")
     with open(timetrack_filename, "w", encoding="utf-8") as f:
         f.write("\n".join(timetracks))
@@ -367,7 +384,7 @@ def compile_audiobook_compilation(voice="th-TH-PremwadeeNeural", output_dir=".")
         print(track)
     print("--------------------------")
     
-    # 2. Concatenate audio files into a single output MP3 inside Audiobook/
+    # 2. Concatenate audio files into a single output MP3 inside Audiobook/ folder
     combined_audio = os.path.join(audiobook_dir, "combined_audiobook.mp3")
     print(f"[*] Concatenating audio files to: {combined_audio}")
     
@@ -381,7 +398,7 @@ def compile_audiobook_compilation(voice="th-TH-PremwadeeNeural", output_dir=".")
         combined_audio
     ]
     
-    result = subprocess.run(concat_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+    result = subprocess.run(concat_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if os.path.exists(concat_list_path):
         os.remove(concat_list_path) # Clean up temporary file
         
@@ -391,7 +408,7 @@ def compile_audiobook_compilation(voice="th-TH-PremwadeeNeural", output_dir=".")
         
     print(f"[✓] Saved combined audio: {combined_audio}")
     
-    # 3. Render the final combined video inside Audiobook/
+    # 3. Render the final combined video inside Audiobook/ folder
     combined_video = os.path.join(audiobook_dir, "combined_audiobook.mp4")
     try:
         create_static_video(cover_image, combined_audio, combined_video, ffmpeg_bin)

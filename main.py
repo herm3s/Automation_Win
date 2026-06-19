@@ -31,8 +31,8 @@ def main():
         help="Optional CSS selector for next chapter button/link"
     )
     scrape_parser.add_argument(
-        "--output", "--option", "--outout", dest="output", default=".",
-        help="Work directory for saving and creating files (default: .)"
+        "--option", default=".", 
+        help="Working directory path to save/read files (default: .)"
     )
     scrape_parser.add_argument(
         "--proxy", default=None,
@@ -42,7 +42,7 @@ def main():
     # 2. Translate Command
     translate_parser = subparsers.add_parser("translate", help="Translate scraped chapters using Gemini or DeepSeek API")
     translate_parser.add_argument(
-        "--ai", default="gemini", choices=["gemini", "deepseek"],
+        "--ai", default="gemini", choices=["gemini", "deepseek", "deep seek", "deep-seek"],
         help="AI translation provider to use (default: gemini)"
     )
     translate_parser.add_argument(
@@ -50,8 +50,8 @@ def main():
         help="Model name to use (default: gemini-2.5-flash for Gemini, deepseek-v4-flash for DeepSeek)"
     )
     translate_parser.add_argument(
-        "--output", "--option", "--outout", dest="output", default=".",
-        help="Work directory for saving and creating files (default: .)"
+        "--option", default=".", 
+        help="Working directory path to save/read files (default: .)"
     )
     translate_parser.add_argument(
         "--proxy", default=None,
@@ -62,7 +62,7 @@ def main():
     audiobook_parser = subparsers.add_parser("audiobook", help="Generate MP3 files and video chapters")
     audiobook_parser.add_argument(
         "--voice", default="th-TH-NiwatNeural",
-        help="TTS Voice code. (e.g. th-TH-NiwatNeural (male, default), th-TH-PremwadeeNeural (female), etc.)"
+        help="TTS Voice code. (e.g. th-TH-NiwatNeural (male, working), th-TH-PremwadeeNeural (female, server-side G2P bug), etc. Default: th-TH-NiwatNeural)"
     )
     audiobook_parser.add_argument(
         "--no-video", action="store_true",
@@ -73,8 +73,8 @@ def main():
         help="Concatenate all MP3s into a single combined audiobook MP3 and render a combined video with YouTube timestamps"
     )
     audiobook_parser.add_argument(
-        "--output", "--option", "--outout", dest="output", default=".",
-        help="Work directory for saving and creating files (default: .)"
+        "--option", default=".", 
+        help="Working directory path to save/read files (default: .)"
     )
     audiobook_parser.add_argument(
         "--proxy", default=None,
@@ -101,7 +101,7 @@ def main():
         help="Optional CSS selector for next chapter button/link"
     )
     all_parser.add_argument(
-        "--ai", default="gemini", choices=["gemini", "deepseek"],
+        "--ai", default="gemini", choices=["gemini", "deepseek", "deep seek", "deep-seek"],
         help="AI translation provider to use (default: gemini)"
     )
     all_parser.add_argument(
@@ -117,8 +117,8 @@ def main():
         help="Skip generating individual MP4 videos, only produce MP3s"
     )
     all_parser.add_argument(
-        "--output", "--option", "--outout", dest="output", default=".",
-        help="Work directory for saving and creating files (default: .)"
+        "--option", default=".", 
+        help="Working directory path to save/read files (default: .)"
     )
     all_parser.add_argument(
         "--proxy", default=None,
@@ -134,19 +134,20 @@ def main():
             title_selector=args.title_selector,
             content_selector=args.content_selector,
             next_selector=args.next_selector,
-            output_dir=args.output,
+            output_dir=args.option,
             proxy=args.proxy
         )
     elif args.command == "translate":
-        run_translation(model=args.model, ai=args.ai, output_dir=args.output, proxy=args.proxy)
+        ai_normalized = args.ai.lower().replace(" ", "").replace("-", "")
+        run_translation(model=args.model, ai=ai_normalized, output_dir=args.option, proxy=args.proxy)
     elif args.command == "audiobook":
         # First process individual chapters (generate MP3s)
         print("[*] Generating individual chapter audio files...")
-        mp3s = process_audiobooks(voice=args.voice, generate_videos=False, output_dir=args.output, proxy=args.proxy)
+        mp3s = process_audiobooks(voice=args.voice, generate_videos=False, output_dir=args.option, proxy=args.proxy)
         
         # If combine flag is set, compile them together into a single video
         if args.combine:
-            compile_audiobook_compilation(voice=args.voice, output_dir=args.output)
+            compile_audiobook_compilation(voice=args.voice, output_dir=args.option)
     elif args.command == "all":
         print("\n[*] --- STAGE 1: Scraping novel chapters ---")
         run_scraper(
@@ -155,17 +156,18 @@ def main():
             title_selector=args.title_selector,
             content_selector=args.content_selector,
             next_selector=args.next_selector,
-            output_dir=args.output,
+            output_dir=args.option,
             proxy=args.proxy
         )
         
         print("\n[*] --- STAGE 2: Translating chapters ---")
-        run_translation(model=args.model, ai=args.ai, output_dir=args.output, proxy=args.proxy)
+        ai_normalized = args.ai.lower().replace(" ", "").replace("-", "")
+        run_translation(model=args.model, ai=ai_normalized, output_dir=args.option, proxy=args.proxy)
         
         print("\n[*] --- STAGE 3: Generating audiobooks & video compilation ---")
         # Generate all MP3s first, then build the single compilation video
-        process_audiobooks(voice=args.voice, generate_videos=False, output_dir=args.output, proxy=args.proxy)
-        compile_audiobook_compilation(voice=args.voice, output_dir=args.output)
+        process_audiobooks(voice=args.voice, generate_videos=False, output_dir=args.option, proxy=args.proxy)
+        compile_audiobook_compilation(voice=args.voice, output_dir=args.option)
         print("\n[✓] Complete pipeline executed successfully!")
     else:
         parser.print_help()
