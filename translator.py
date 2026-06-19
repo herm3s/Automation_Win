@@ -36,6 +36,102 @@ def get_api_opener():
         )
     return _api_opener
 
+def thai_to_int(text: str) -> int | None:
+    ONES = {
+        'หนึ่ง': 1, 'เอ็ด': 1,
+        'สอง': 2, 'ยี่': 2,
+        'สาม': 3, 'สี่': 4, 'ห้า': 5,
+        'หก': 6, 'เจ็ด': 7, 'แปด': 8, 'เก้า': 9,
+    }
+    result = 0
+
+    m = re.match(r'^(หนึ่ง|สอง|สาม|สี่|ห้า|หก|เจ็ด|แปด|เก้า)พัน(.*)', text)
+    if m:
+        result += ONES[m.group(1)] * 1000
+        text = m.group(2)
+
+    m = re.match(r'^(หนึ่ง|สอง|สาม|สี่|ห้า|หก|เจ็ด|แปด|เก้า)ร้อย(.*)', text)
+    if m:
+        result += ONES[m.group(1)] * 100
+        text = m.group(2)
+
+    m = re.match(r'^(ยี่|สอง|สาม|สี่|ห้า|หก|เจ็ด|แปด|เก้า)?(สิบ)(.*)', text)
+    if m:
+        tens_prefix = m.group(1)
+        text = m.group(3)
+        result += 20 if tens_prefix == 'ยี่' else (ONES[tens_prefix] * 10 if tens_prefix else 10)
+
+    m = re.match(r'^(หนึ่ง|เอ็ด|สอง|สาม|สี่|ห้า|หก|เจ็ด|แปด|เก้า)', text)
+    if m:
+        result += ONES[m.group(1)]
+
+    return result if result > 0 else None
+
+
+def normalize_filename(filename: str) -> str:
+    """
+    Input:  0033_บทที่หนึ่งร้อยสามสิบสอง_กล้าที่จะทำกับกล้าที่จะไม่ทำ.md
+    Output: 0033_บทที่ 132_กล้าที่จะทำกับกล้าที่จะไม่ทำ.md
+    """
+    # แยก: running_number _ ส่วนที่เหลือ
+    m = re.match(r'^(\d{4})_(.*)', filename)
+    if not m:
+        return filename  # รูปแบบไม่ตรง → คืนเดิม
+
+    running = m.group(1)   # "0033"
+    rest    = m.group(2)   # "บทที่หนึ่งร้อยสามสิบสอง_กล้าที่จะทำกับกล้าที่จะไม่ทำ.md"
+
+    # หา prefix (บทที่/ตอนที่) + ตัวเลขไทย + ส่วนที่เหลือ
+    m2 = re.match(r'^(บทที่|ตอนที่)([^_]+)(_.*)', rest)
+    if not m2:
+        return filename  # ไม่มี prefix → คืนเดิม
+
+    prefix     = m2.group(1)   # "บทที่"
+    thai_num   = m2.group(2)   # "หนึ่งร้อยสามสิบสอง"
+    remainder  = m2.group(3)   # "_กล้าที่จะทำกับกล้าที่จะไม่ทำ.md"
+
+    # ถ้าเป็นตัวเลขอารบิกอยู่แล้ว ไม่ต้องแปลง
+    if re.match(r'^\d+$', thai_num.strip()):
+        return filename
+
+    num = thai_to_int(thai_num.strip())
+    if num is None:
+        return filename  # แปลงไม่ได้ → คืนเดิม
+
+    return f"{running}_{prefix} {num}{remainder}"
+
+
+def rename_files(folder: str, dry_run: bool = True):
+    if not os.path.exists(folder):
+        return
+    files = sorted(f for f in os.listdir(folder) if f.lower().endswith(('.md', '.mp3', '.mp4')))
+
+    for filename in files:
+        new_name = normalize_filename(filename)
+        if new_name == filename:
+            continue  # ไม่มีอะไรเปลี่ยน
+
+        old_path = os.path.join(folder, filename)
+        new_path = os.path.join(folder, new_name)
+
+        if dry_run:
+            try:
+                print(f"  {filename}\n→ {new_name}\n")
+            except UnicodeEncodeError:
+                pass
+        else:
+            try:
+                os.rename(old_path, new_path)
+                try:
+                    print(f"[*] Renamed: {filename} -> {new_name}")
+                except UnicodeEncodeError:
+                    print(f"[*] Renamed: (unicode filename hidden due to console encoding limits)")
+            except Exception as e:
+                try:
+                    print(f"[!] Error renaming {filename} to {new_name}: {e}")
+                except UnicodeEncodeError:
+                    print(f"[!] Error renaming a file due to console encoding: {type(e).__name__}")
+
 def get_gemini_api_key():
     """
     Retrieves the Gemini API key from environment variables.
@@ -346,6 +442,13 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
         os.makedirs(translate_dir)
         print(f"[*] Created directory: {translate_dir}/")
         
+    # Auto-rename existing files to normalize chapter numbers to Arabic numerals
+    print("[*] Normalizing existing translated files and audiobooks...")
+    rename_files(translate_dir, dry_run=False)
+    audiobook_dir = os.path.join(output_dir, "Audiobook")
+    if os.path.exists(audiobook_dir):
+        rename_files(audiobook_dir, dry_run=False)
+        
     # Retry loop configuration
     max_passes = 5
     pass_count = 1
@@ -582,6 +685,7 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
 
                 sanitized_title = sanitize_filename(translated_title)
                 new_filename = f"{running_prefix}_{sanitized_title}.md"
+                new_filename = normalize_filename(new_filename)
                 new_filepath = os.path.join(translate_dir, new_filename)
 
                 # Save translated file directly to translate/
