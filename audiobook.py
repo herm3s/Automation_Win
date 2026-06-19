@@ -67,11 +67,11 @@ def find_cover_image(directory=".") -> str:
             
     return None
 
-async def text_to_speech(text: str, output_path: str, voice: str):
+async def text_to_speech(text: str, output_path: str, voice: str, proxy: str = None):
     """
     Converts cleaned text to an MP3 file using edge-tts.
     """
-    communicate = edge_tts.Communicate(text, voice)
+    communicate = edge_tts.Communicate(text, voice, proxy=proxy)
     await communicate.save(output_path)
 
 def get_audio_duration(mp3_path: str, ffprobe_bin: str) -> float:
@@ -141,7 +141,7 @@ def format_seconds_to_hms(seconds: float) -> str:
     secs = s % 60
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
-def process_audiobooks(voice="th-TH-PremwadeeNeural", generate_videos=False, output_dir="."):
+def process_audiobooks(voice="th-TH-PremwadeeNeural", generate_videos=False, output_dir=".", proxy=None):
     """
     Pipeline Step 3:
     - Finds all translated markdown files (000X_*.md in specified output_dir).
@@ -248,9 +248,16 @@ def process_audiobooks(voice="th-TH-PremwadeeNeural", generate_videos=False, out
                     print(f"[!] Warning: Cleaned text for {filename} is empty. Skipping.")
                     continue
                     
+                # Resolve proxy URL if proxy is enabled
+                proxy_url = None
+                if proxy and proxy.lower() == "true":
+                    proxy_url = "http://siph-mmswg01.siph.com:8080"
+                elif proxy and (proxy.startswith("http://") or proxy.startswith("https://")):
+                    proxy_url = proxy
+
                 # 2. Generate MP3 using edge-tts (saved to Audiobook/)
                 print(f"[*] Generating audio (Voice: {voice}) -> Audiobook/{mp3_filename}")
-                asyncio.run(text_to_speech(clean_text, mp3_filepath, voice))
+                asyncio.run(text_to_speech(clean_text, mp3_filepath, voice, proxy=proxy_url))
                 print(f"[✓] Saved audio: {mp3_filename}")
                 if mp3_filepath not in generated_mp3s:
                     generated_mp3s.append(mp3_filepath)

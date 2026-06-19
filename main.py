@@ -76,6 +76,10 @@ def main():
         "--output", "--option", "--outout", dest="output", default=".",
         help="Work directory for saving and creating files (default: .)"
     )
+    audiobook_parser.add_argument(
+        "--proxy", default=None,
+        help="Use proxy for TTS API requests (e.g. 'true')"
+    )
     
     # 4. All Command (Full Pipeline)
     all_parser = subparsers.add_parser("all", help="Run the full pipeline: scrape, translate, and generate audiobook compilation")
@@ -138,7 +142,7 @@ def main():
     elif args.command == "audiobook":
         # First process individual chapters (generate MP3s)
         print("[*] Generating individual chapter audio files...")
-        mp3s = process_audiobooks(voice=args.voice, generate_videos=False, output_dir=args.output)
+        mp3s = process_audiobooks(voice=args.voice, generate_videos=False, output_dir=args.output, proxy=args.proxy)
         
         # If combine flag is set, compile them together into a single video
         if args.combine:
@@ -160,7 +164,7 @@ def main():
         
         print("\n[*] --- STAGE 3: Generating audiobooks & video compilation ---")
         # Generate all MP3s first, then build the single compilation video
-        process_audiobooks(voice=args.voice, generate_videos=False, output_dir=args.output)
+        process_audiobooks(voice=args.voice, generate_videos=False, output_dir=args.output, proxy=args.proxy)
         compile_audiobook_compilation(voice=args.voice, output_dir=args.output)
         print("\n[✓] Complete pipeline executed successfully!")
     else:
