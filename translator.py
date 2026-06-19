@@ -366,26 +366,6 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
     if files_to_extract:
         print(f"[*] Pass 1: Extracting glossary terms from {len(files_to_extract)} files...")
         
-        # Determine extraction API (respect the selected --ai provider, fallback if key not found)
-        if ai == "gemini":
-            ext_api_key = get_gemini_api_key()
-            if ext_api_key and "your_gemini_api_key" not in ext_api_key:
-                ext_ai = "gemini"
-                ext_model = "gemini-2.5-flash"
-            else:
-                ext_api_key = os.getenv("DEEPSEEK_API_KEY")
-                ext_ai = "deepseek"
-                ext_model = "deepseek-v4-flash"
-        else:
-            ext_api_key = os.getenv("DEEPSEEK_API_KEY")
-            if ext_api_key:
-                ext_ai = "deepseek"
-                ext_model = model if model else "deepseek-v4-flash"
-            else:
-                ext_api_key = get_gemini_api_key()
-                ext_ai = "gemini"
-                ext_model = "gemini-2.5-flash"
-
         extraction_batches = partition_files(files_to_extract, batch_size=10, merge_threshold=4)
         for eb_idx, e_batch in enumerate(extraction_batches):
             print(f"\n[*] Processing extraction batch {eb_idx + 1}/{len(extraction_batches)} (Size: {len(e_batch)} files)...")
@@ -398,13 +378,37 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
                     print(f"[!] Error reading {filepath} for glossary extraction: {e}")
 
             user_prompt_extract = f"[MODE: EXTRACT]\n{combined_text}"
-            print(f"[*] Sending combined text to {ext_ai} ({ext_model}) for glossary extraction ({len(user_prompt_extract)} chars)...")
-            try:
-                if ext_ai == "gemini":
-                    raw_ext = call_gemini_api(system_prompt, user_prompt_extract, ext_api_key, ext_model)
+            
+            raw_ext = None
+            
+            # 1. Try Gemini first (if key is configured)
+            gemini_key = get_gemini_api_key()
+            if gemini_key and "your_gemini_api_key" not in gemini_key:
+                print(f"[*] Trying Gemini (gemini-2.5-flash) for glossary extraction ({len(user_prompt_extract)} chars)...")
+                try:
+                    raw_ext = call_gemini_api(system_prompt, user_prompt_extract, gemini_key, "gemini-2.5-flash")
+                except Exception as ge:
+                    print(f"[!] Gemini extraction failed or token limit reached: {ge}")
+            
+            # 2. Fallback to DeepSeek if Gemini was not used or failed
+            if raw_ext is None:
+                ds_key = os.getenv("DEEPSEEK_API_KEY")
+                if ds_key:
+                    ds_model = model if ai == "deepseek" else "deepseek-v4-flash"
+                    print(f"[*] Falling back to DeepSeek ({ds_model}) for glossary extraction ({len(user_prompt_extract)} chars)...")
+                    try:
+                        raw_ext, _ = call_deepseek_api(system_prompt, user_prompt_extract, ds_key, ds_model)
+                    except Exception as de:
+                        print(f"[!] DeepSeek extraction failed: {de}")
                 else:
-                    raw_ext, _ = call_deepseek_api(system_prompt, user_prompt_extract, ext_api_key, ext_model)
+                    print("[!] DEEPSEEK_API_KEY not set in .env for fallback.")
 
+            if raw_ext is None:
+                print("[!] Error: Glossary extraction failed on both Gemini and DeepSeek.")
+                print("[*] Progress saved. You can rerun the script to resume.")
+                return
+
+            try:
                 extracted_list = parse_json_array(raw_ext)
                 print(f"[✓] Extracted {len(extracted_list)} glossary terms from this batch.")
 
