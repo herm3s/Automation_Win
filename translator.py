@@ -366,20 +366,25 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
     if files_to_extract:
         print(f"[*] Pass 1: Extracting glossary terms from {len(files_to_extract)} files...")
         
-        # Determine extraction API (prefer Gemini 2.5 Flash if key is available)
-        ext_api_key = get_gemini_api_key()
-        if ext_api_key and "your_gemini_api_key" not in ext_api_key:
-            ext_ai = "gemini"
-            ext_model = "gemini-2.5-flash"
+        # Determine extraction API (respect the selected --ai provider, fallback if key not found)
+        if ai == "gemini":
+            ext_api_key = get_gemini_api_key()
+            if ext_api_key and "your_gemini_api_key" not in ext_api_key:
+                ext_ai = "gemini"
+                ext_model = "gemini-2.5-flash"
+            else:
+                ext_api_key = os.getenv("DEEPSEEK_API_KEY")
+                ext_ai = "deepseek"
+                ext_model = "deepseek-v4-flash"
         else:
             ext_api_key = os.getenv("DEEPSEEK_API_KEY")
             if ext_api_key:
                 ext_ai = "deepseek"
-                ext_model = model if ai == "deepseek" else "deepseek-v4-flash"
+                ext_model = model if model else "deepseek-v4-flash"
             else:
-                ext_ai = ai
-                ext_api_key = api_key
-                ext_model = model
+                ext_api_key = get_gemini_api_key()
+                ext_ai = "gemini"
+                ext_model = "gemini-2.5-flash"
 
         extraction_batches = partition_files(files_to_extract, batch_size=10, merge_threshold=4)
         for eb_idx, e_batch in enumerate(extraction_batches):
