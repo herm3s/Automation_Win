@@ -23,6 +23,18 @@ CONTENT:
 <translated_markdown_content>
 """
 
+_api_opener = None
+
+def get_api_opener():
+    global _api_opener
+    if _api_opener is None:
+        import ssl
+        ssl_context = ssl._create_unverified_context()
+        _api_opener = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=ssl_context)
+        )
+    return _api_opener
+
 def get_gemini_api_key():
     """
     Retrieves the Gemini API key from environment variables.
@@ -55,9 +67,8 @@ def call_gemini_api(system_prompt: str, prompt_text: str, api_key: str, model="g
     )
     
     try:
-        import ssl
-        ssl_context = ssl._create_unverified_context()
-        with urllib.request.urlopen(req, context=ssl_context) as response:
+        opener = get_api_opener()
+        with opener.open(req) as response:
             res_body = response.read().decode("utf-8")
             res_json = json.loads(res_body)
             # Extract generated text
@@ -113,9 +124,8 @@ def call_deepseek_api(system_prompt: str, prompt_text: str, api_key: str, model=
     )
     
     try:
-        import ssl
-        ssl_context = ssl._create_unverified_context()
-        with urllib.request.urlopen(req, context=ssl_context) as response:
+        opener = get_api_opener()
+        with opener.open(req) as response:
             res_body = response.read().decode("utf-8")
             res_json = json.loads(res_body)
             # Extract generated text from chat completion structure
@@ -240,15 +250,27 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
     """
     import time
     
+    global _api_opener
+    import ssl
+    ssl_context = ssl._create_unverified_context()
+    
     # Configure global proxy for urllib requests if proxy is enabled
     if proxy and proxy.lower() == "true":
         proxy_support = urllib.request.ProxyHandler({
             'http': 'http://siph-mmswg01.siph.com:8080',
             'https': 'http://siph-mmswg01.siph.com:8080'
         })
-        opener = urllib.request.build_opener(proxy_support)
-        urllib.request.install_opener(opener)
+        _api_opener = urllib.request.build_opener(
+            proxy_support,
+            urllib.request.HTTPSHandler(context=ssl_context)
+        )
+        urllib.request.install_opener(_api_opener)
         print("[*] Proxy enabled for API requests: http://siph-mmswg01.siph.com:8080")
+    else:
+        _api_opener = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=ssl_context)
+        )
+        urllib.request.install_opener(_api_opener)
     
     # Ensure output directory exists
     if output_dir and output_dir != ".":
