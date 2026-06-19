@@ -50,7 +50,7 @@ python3 ../main.py all --url "URL_เริ่มต้น" --limit จำนว
 *ตัวอย่างการรันจริงสำหรับเรื่องจิงอันโหว:*
 ```bash
 ### บนวินโดว์ ใช้ 
-& "D:\Gemini Labs\Automation\.venv\Scripts\python.exe" "D:\Gemini Labs\Automation\main.py" all --url "https://funs.me/text/17561/15670051.html" --limit 5 --title-selector "td[background*='bgheader']" --content-selector "#ChSize" --next-selector "a.pages" --ai "deepseek"
+& "D:\Gemini Labs\Automation_Win\.venv\Scripts\python.exe" "D:\Gemini Labs\Automation_Win\main.py" all --url "https://funs.me/text/17561/15670051.html" --limit 5 --title-selector "td[background*='bgheader']" --content-selector "#ChSize" --next-selector "a.pages" --ai "deepseek"
 ### บน MacOS ใช้ command ด้านล่าง
 python3 ../main.py all --url "https://funs.me/text/17561/15670001.html" --limit 5 --title-selector "td[background*='bgheader']" --content-selector "#ChSize" --next-selector "a.pages" --ai "deepseek"
 ```

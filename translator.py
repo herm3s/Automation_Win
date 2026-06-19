@@ -5,6 +5,7 @@ import shutil
 import json
 import urllib.request
 import urllib.error
+# pyrefly: ignore [missing-import]
 from dotenv import load_dotenv
 from utils import sanitize_filename, draw_progress_bar
 
