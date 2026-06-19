@@ -72,6 +72,10 @@ def collapse_repeating_punctuation(text: str) -> str:
     return text
 
 def clean_special_chars(content: str) -> str:
+    # 0. Strip any trailing glossary JSON array at the end of the file
+    content = re.sub(r'(?:GLOSSARY:\s*)?\[\s*\{\s*"source":.*\}\s*\]\s*$', '', content.strip(), flags=re.DOTALL)
+    content = re.sub(r'GLOSSARY:\s*$', '', content, flags=re.MULTILINE | re.IGNORECASE)
+
     # 1. Remove "# CONTENT:" or "CONTENT:" or "# CONTENT" at the start of a line
     content = re.sub(r'^\s*#?\s*CONTENT\s*:\s*\n?', '', content, flags=re.IGNORECASE | re.MULTILINE)
     content = re.sub(r'^\s*#?\s*CONTENT\s*$', '', content, flags=re.IGNORECASE | re.MULTILINE)
@@ -181,6 +185,9 @@ def main():
             content = f.read()
         lines = content.split("\n")
         for idx, line in enumerate(lines):
+            # Ignore lines that look like JSON objects/arrays or glossary mapping
+            if '"source":' in line or '"target":' in line or line.strip().startswith('[') or line.strip().startswith('{') or line.strip().startswith(']'):
+                continue
             has_unparenthesized_chinese = False
             if has_chinese(line):
                 stripped_line = re.sub(r'\s*\([\u4e00-\u9fff]+\)', '', line)
