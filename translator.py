@@ -232,13 +232,23 @@ def partition_files(files, batch_size=10, merge_threshold=4):
             i += batch_size
     return batches
 
-def run_translation(model=None, ai="gemini", output_dir="."):
+def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
     """
     Scans the specified folder for untranslated scraped markdown files,
     translates them using Gemini or DeepSeek, saves the translations, and moves the originals to done/
     Retries any failed chapters at the end of the pass before proceeding.
     """
     import time
+    
+    # Configure global proxy for urllib requests if proxy is enabled
+    if proxy and proxy.lower() == "true":
+        proxy_support = urllib.request.ProxyHandler({
+            'http': 'http://siph-mmswg01.siph.com:8080',
+            'https': 'http://siph-mmswg01.siph.com:8080'
+        })
+        opener = urllib.request.build_opener(proxy_support)
+        urllib.request.install_opener(opener)
+        print("[*] Proxy enabled for API requests: http://siph-mmswg01.siph.com:8080")
     
     # Ensure output directory exists
     if output_dir and output_dir != ".":

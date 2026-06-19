@@ -53,6 +53,10 @@ def main():
         "--output", "--option", "--outout", dest="output", default=".",
         help="Work directory for saving and creating files (default: .)"
     )
+    translate_parser.add_argument(
+        "--proxy", default=None,
+        help="Use proxy for translator API requests (e.g. 'true')"
+    )
     
     # 3. Audiobook Command
     audiobook_parser = subparsers.add_parser("audiobook", help="Generate MP3 files and video chapters")
@@ -130,7 +134,7 @@ def main():
             proxy=args.proxy
         )
     elif args.command == "translate":
-        run_translation(model=args.model, ai=args.ai, output_dir=args.output)
+        run_translation(model=args.model, ai=args.ai, output_dir=args.output, proxy=args.proxy)
     elif args.command == "audiobook":
         # First process individual chapters (generate MP3s)
         print("[*] Generating individual chapter audio files...")
@@ -152,7 +156,7 @@ def main():
         )
         
         print("\n[*] --- STAGE 2: Translating chapters ---")
-        run_translation(model=args.model, ai=args.ai, output_dir=args.output)
+        run_translation(model=args.model, ai=args.ai, output_dir=args.output, proxy=args.proxy)
         
         print("\n[*] --- STAGE 3: Generating audiobooks & video compilation ---")
         # Generate all MP3s first, then build the single compilation video
