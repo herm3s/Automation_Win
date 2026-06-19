@@ -15,6 +15,7 @@ load_dotenv()
 DEFAULT_SYSTEM_PROMPT = """You are a professional web novel translator. Translate the following chapter content.
 Maintain the original tone, style, character names, and formatting (Markdown).
 Translate the chapter title to English/Thai as appropriate and format it for a file name.
+Ensure the chapter number in FILENAME uses Arabic numerals (e.g., 'บทที่ 111' or 'Chapter 111' instead of written-out words).
 
 Provide the translation in the exact format shown below, with no introductory or concluding remarks:
 
