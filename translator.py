@@ -145,14 +145,20 @@ def call_gemini_api(system_prompt: str, prompt_text: str, api_key: str, model="g
     """
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     
-    # Construct the JSON payload
+    # Construct the JSON payload with safety settings disabled
     payload = {
         "system_instruction": {
             "parts": [{"text": system_prompt}]
         },
         "contents": [{
             "parts": [{"text": prompt_text}]
-        }]
+        }],
+        "safetySettings": [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+        ]
     }
     
     data = json.dumps(payload).encode("utf-8")
@@ -168,17 +174,21 @@ def call_gemini_api(system_prompt: str, prompt_text: str, api_key: str, model="g
         with opener.open(req) as response:
             res_body = response.read().decode("utf-8")
             res_json = json.loads(res_body)
-            # Extract generated text
-            if "candidates" in res_json:
-                text = res_json["candidates"][0]["content"]["parts"][0]["text"]
-                return text
+            # Extract generated text safely
+            if "candidates" in res_json and len(res_json["candidates"]) > 0:
+                candidate = res_json["candidates"][0]
+                if "content" in candidate and "parts" in candidate["content"] and len(candidate["content"]["parts"]) > 0:
+                    text = candidate["content"]["parts"][0].get("text", "")
+                    return text
+                else:
+                    finish_reason = candidate.get("finishReason", "UNKNOWN")
+                    raise RuntimeError(f"Gemini API returned no content. Finish reason: {finish_reason}. Full response: {res_json}")
             elif "error" in res_json:
                 err_msg = res_json["error"].get("message", "Unknown error")
                 err_status = res_json["error"].get("status", "Unknown status")
                 raise RuntimeError(f"Gemini API returned error: {err_status} - {err_msg}")
             else:
-                # E.g. prompt was blocked by safety settings or other reasons
-                raise RuntimeError(f"Unexpected API response structure (possibly blocked): {res_json}")
+                raise RuntimeError(f"Unexpected response structure: {res_json}")
     except urllib.error.HTTPError as e:
         error_info = e.read().decode("utf-8")
         try:
@@ -191,7 +201,7 @@ def call_gemini_api(system_prompt: str, prompt_text: str, api_key: str, model="g
             pass
         raise RuntimeError(f"Gemini API HTTP Error {e.code}: {error_info}")
     except Exception as e:
-        raise RuntimeError(f"Error calling Gemini API: {e}")
+        raise RuntimeError(f"Gemini API Error: {e}")
 
 def call_deepseek_api(system_prompt: str, prompt_text: str, api_key: str, model="deepseek-v4-flash") -> tuple:
     """
@@ -472,6 +482,43 @@ def translate_remaining_chinese_globally(translate_dir: str, api_key: str):
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(new_content)
         print(f"[✓] Applied translations and saved: {os.path.basename(filepath)}")
+
+def translate_chinese_filenames(folder: str, api_key: str):
+    if not os.path.exists(folder):
+        return
+    files = sorted(os.listdir(folder))
+    for filename in files:
+        if has_chinese(filename):
+            print(f"[*] Found Chinese in filename: {filename}")
+            system_prompt = (
+                "You are an expert Chinese-to-Thai translator. Translate the Chinese text in the filename to natural, clean Thai. "
+                "The filename might contain chapter number and title, e.g. '第三百零九章：骑兵对决' -> 'บทที่ 309 การปะทะของทหารม้า'. "
+                "Ensure chapter numbers are converted to Arabic numerals (e.g. 309). "
+                "Replace spaces and colons with underscores to make it a safe filename. "
+                "Return ONLY the translated Thai filename without file extension, e.g. 'บทที่_309_การปะทะของทหารม้า'. "
+                "Do not include any notes, explanations, or quotes."
+            )
+            name_without_ext = os.path.splitext(filename)[0]
+            clean_part = re.sub(r'^\d{4}_(?:translated_)?', '', name_without_ext)
+            
+            try:
+                translated_part = call_gemini_api(system_prompt, clean_part, api_key, model="gemini-2.5-flash")
+                translated_part = translated_part.strip().strip("'\"` \t")
+                sanitized_part = sanitize_filename(translated_part)
+                match = re.match(r'^(\d{4})_', filename)
+                running_prefix = match.group(1) if match else "0000"
+                ext = os.path.splitext(filename)[1]
+                
+                new_filename = f"{running_prefix}_{sanitized_part}{ext}"
+                new_filename = normalize_filename(new_filename)
+                
+                old_path = os.path.join(folder, filename)
+                new_path = os.path.join(folder, new_filename)
+                
+                os.rename(old_path, new_path)
+                print(f"[✓] Translated filename: {filename} -> {new_filename}")
+            except Exception as e:
+                print(f"[!] Error translating filename {filename}: {e}")
 
 def parse_json_array(text: str):
     """
@@ -921,12 +968,18 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
     if g_key and "your_gemini_api_key" not in g_key:
         print("[*] PHASE 3: Scanning and batch-translating remaining Chinese characters globally...")
         translate_remaining_chinese_globally(translate_dir, g_key)
+        
+        # Translate any remaining Chinese filenames
+        print("[*] PHASE 3: Checking and translating any remaining Chinese in filenames...")
+        translate_chinese_filenames(translate_dir, g_key)
 
     # Auto-rename existing files to normalize chapter numbers to Arabic numerals
     print("[*] PHASE 3: Normalizing translated files and audiobooks...")
     rename_files(translate_dir, dry_run=False)
     audiobook_dir = os.path.join(output_dir, "Audiobook")
     if os.path.exists(audiobook_dir):
+        if g_key and "your_gemini_api_key" not in g_key:
+            translate_chinese_filenames(audiobook_dir, g_key)
         rename_files(audiobook_dir, dry_run=False)
 
     print(f"\n[*] PHASE 3: Saving final complete glossary (superset) with {len(complete_glossary)} terms to glossary.json...")
