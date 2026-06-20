@@ -61,6 +61,11 @@
 python3 main.py all --url "URL_เริ่มต้น" --limit จำนวนตอน --title-selector "CSS_Title" --content-selector "CSS_Content" --next-selector "CSS_Next_Link" --option "โฟลเดอร์ที่เก็บงาน"
 ```
 * **ตัวเลือกการจำกัดจำนวนตอน (`--limit`)**: สามารถใส่จำนวนตอนที่ต้องการ หรือป้อน `null` เพื่อสั่งให้โปรแกรมดึงตอนใหม่เรื่อย ๆ ไปจนสุดทางโดยอัตโนมัติ (เช่น `--limit null`)
+* **ตัวเลือกการเลือกผู้ให้บริการแปลภาษา (`--ai`)**: เลือกผู้ให้บริการแปลภาษาระหว่าง `gemini` หรือ `deepseek` (ค่าเริ่มต้นคือ `gemini`)
+* **ตัวเลือกโมเดลเฉพาะเจาะจง (`--model`)**: ระบุโมเดล เช่น `--model "gemini-2.5-flash"` หรือ `--model "deepseek-v4-flash"`
+* **ตัวเลือกการระบุเสียง TTS (`--voice`)**: กำหนดรหัสเสียงของ Edge-TTS (ค่าเริ่มต้น: `th-TH-NiwatNeural` สำหรับเสียงผู้ชาย)
+* **ตัวเลือกไม่สร้างวิดีโอรายตอน (`--no-video`)**: สำหรับต้องการให้สร้างเฉพาะไฟล์เสียง MP3 ไม่ประกอบวิดีโอรายตอน (แต่ยังคงประกอบวิดีโอรวม `.mp4` อยู่)
+* **ตัวเลือกการระบุ Proxy (`--proxy`)**: ใช้กำหนดค่า Proxy สำหรับตัว Scraper/API/TTS (เช่น `--proxy "true"`)
 
 *ตัวอย่างการรันจริงสำหรับเรื่องจิงอันโหว:*
 ```bash
@@ -72,10 +77,14 @@ python3 main.py all --url "https://funs.me/text/17561/15670001.html" --limit 5 -
 python3 main.py all --url "https://www.bgg99.cc/book/1136853033/916083008.html" --limit 25 --title-selector ".content h1" --content-selector "#content" --next-selector ".page_chapter ul li:nth-child(3) a" --option "/Users/chettatosuanchit/Documents/คนบ้าแห่งต้าหมิง" --ai "deepseek"
 ```
 
-
 *ตัวอย่างการรันจริงสำหรับเรื่องช่วงเวลาหลายปีของฉันในฐานะนักบวชลัทธิเต๋า:*
 ```bash
 python3 main.py all --url "https://funs.me/text/2080/15540101.html" --limit 25 --title-selector "td[background*='bgheader'] > font" --content-selector "#ChSize" --next-selector "a.pages" --option "/Users/chettatosuanchit/Documents/ช่วงเวลาหลายปีของฉันในฐานะนักบวชลัทธิเต๋า" --ai "deepseek"
+```
+
+*ตัวอย่างการรันจริงสำหรับเรื่องย้อนเวลาสู่หนานหมิงเป็นท่านอ๋อง:*
+```bash
+python3 main.py all --url "https://funs.me/text/17561/15670177.html" --limit 50 --title-selector "td[background*='bgheader']" --content-selector "#ChSize" --next-selector "a.pages" --option "/Users/chettatosuanchit/Documents/ย้อนเวลาสู่หนานหมิงเป็นท่านอ๋อง"
 ```
 
 ---
@@ -143,14 +152,23 @@ python3 combine_fast.py \
 
 ---
 
-# สร้างเสียง + วิดีโอรวม (มี Skip Logic และ Normalize Filename)
+# 📋 ตัวอย่างการสั่งรันแบบแยกสเต็ป (ตัวอย่างสำหรับเรื่อง: ย้อนเวลาสู่หนานหมิงเป็นท่านอ๋อง)
+
+หากต้องการทำทีละขั้นตอนอย่างปลอดภัย สามารถก๊อปปี้เซ็ตคำสั่งด้านล่างนี้ไปรันได้เลยครับ:
+
+### 1. สั่ง Scrape โหลดเนื้อหาดิบภาษาจีน (50 ตอน)
 ```bash
-python3 /Users/chettatosuanchit/Documents/Automation/main.py audiobook --combine --option "/Users/chettatosuanchit/Documents/ย้อนเวลาสู่หนานหมิงเป็นท่านอ๋อง"
+python3 /Users/chettatosuanchit/Documents/Automation/main.py scrape --url "https://funs.me/text/17561/15670177.html" --limit 50 --title-selector "td[background*='bgheader']" --content-selector "#ChSize" --next-selector "a.pages" --option "/Users/chettatosuanchit/Documents/ย้อนเวลาสู่หนานหมิงเป็นท่านอ๋อง"
 ```
-# หรือ
+
+### 2. สั่งแปลเนื้อหาด้วย DeepSeek (จำกัด 50 ตอนล่าสุด)
 ```bash
-cd /Users/chettatosuanchit/Documents/Automation
-python3 main.py audiobook --combine --option "/Users/chettatosuanchit/Documents/ย้อนเวลาสู่หนานหมิงเป็นท่านอ๋อง"
+python3 /Users/chettatosuanchit/Documents/Automation/main.py translate --option "/Users/chettatosuanchit/Documents/ย้อนเวลาสู่หนานหมิงเป็นท่านอ๋อง" --ai "deepseek" --limit 50
+```
+
+### 3. สั่งสร้างไฟล์เสียงและรวมไฟล์วิดีโอ (จำกัด 50 ตอนล่าสุด)
+```bash
+python3 /Users/chettatosuanchit/Documents/Automation/main.py audiobook --combine --option "/Users/chettatosuanchit/Documents/ย้อนเวลาสู่หนานหมิงเป็นท่านอ๋อง" --limit 50
 ```
 
 
