@@ -166,7 +166,7 @@ python3 combine_fast.py \
 ### ⚡️ สั่งแปลพร้อมสร้างเสียงและวิดีโอรวมในคำสั่งเดียว (Stage 2 + 3)
 หากดาวน์โหลดเนื้อหาดิบเสร็จสิ้นแล้ว และต้องการสั่งรันขั้นตอนนี้สำหรับ 50 ตอนแรก:
 ```bash
-python3 /Users/chettatosuanchit/Documents/Automation/main.py translate-audiobook --option "/Users/chettatosuanchit/Documents/ย้อนเวลาสู่หนานหมิงเป็นท่านอ๋อง" --ai "deepseek" --limit 50
+python3 main.py translate-audiobook --option "/Users/chettatosuanchit/Documents/ย้อนเวลาสู่หนานหมิงเป็นท่านอ๋อง" --ai "deepseek" --limit 50
 ```
 
 ---
@@ -177,17 +177,17 @@ python3 /Users/chettatosuanchit/Documents/Automation/main.py translate-audiobook
 
 ### 1. สั่ง Scrape โหลดเนื้อหาดิบภาษาจีน (50 ตอน)
 ```bash
-python3 /Users/chettatosuanchit/Documents/Automation/main.py scrape --url "https://funs.me/text/17561/15670177.html" --limit 50 --title-selector "td[background*='bgheader']" --content-selector "#ChSize" --next-selector "a.pages" --option "/Users/chettatosuanchit/Documents/ย้อนเวลาสู่หนานหมิงเป็นท่านอ๋อง"
+python3 main.py scrape --url "https://funs.me/text/17561/15670177.html" --limit 50 --title-selector "td[background*='bgheader']" --content-selector "#ChSize" --next-selector "a.pages" --option "/Users/chettatosuanchit/Documents/ย้อนเวลาสู่หนานหมิงเป็นท่านอ๋อง"
 ```
 
 ### 2. สั่งแปลเนื้อหาด้วย DeepSeek (จำกัด 50 ตอนล่าสุด)
 ```bash
-python3 /Users/chettatosuanchit/Documents/Automation/main.py translate --option "/Users/chettatosuanchit/Documents/ย้อนเวลาสู่หนานหมิงเป็นท่านอ๋อง" --ai "deepseek" --limit 50
+python3 main.py translate --option "/Users/chettatosuanchit/Documents/ย้อนเวลาสู่หนานหมิงเป็นท่านอ๋อง" --ai "deepseek" --limit 50
 ```
 
 ### 3. สั่งสร้างไฟล์เสียงและรวมไฟล์วิดีโอ (จำกัด 50 ตอนล่าสุด)
 ```bash
-python3 /Users/chettatosuanchit/Documents/Automation/main.py audiobook --combine --option "/Users/chettatosuanchit/Documents/ย้อนเวลาสู่หนานหมิงเป็นท่านอ๋อง" --limit 50
+python3 main.py audiobook --combine --option "/Users/chettatosuanchit/Documents/ย้อนเวลาสู่หนานหมิงเป็นท่านอ๋อง" --limit 50
 ```
 
 
