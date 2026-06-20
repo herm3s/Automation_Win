@@ -699,15 +699,19 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
             
             raw_ext = None
             
-            # 1. Try DeepSeek first (if key is configured)
+            # 1. Try DeepSeek first (if key is configured) - with up to 3 retries
             ds_key = os.getenv("DEEPSEEK_API_KEY")
             if ds_key:
                 ds_model = model if ai == "deepseek" else "deepseek-v4-flash"
-                print(f"[*] Trying DeepSeek ({ds_model}) for glossary extraction ({len(user_prompt_extract)} chars)...")
-                try:
-                    raw_ext, _ = call_deepseek_api(system_prompt, user_prompt_extract, ds_key, ds_model)
-                except Exception as de:
-                    print(f"[!] DeepSeek extraction failed: {de}")
+                for attempt in range(1, 4):
+                    print(f"[*] Trying DeepSeek ({ds_model}) for glossary extraction (Attempt {attempt}/3, {len(user_prompt_extract)} chars)...")
+                    try:
+                        raw_ext, _ = call_deepseek_api(system_prompt, user_prompt_extract, ds_key, ds_model)
+                        break
+                    except Exception as de:
+                        print(f"[!] DeepSeek extraction attempt {attempt} failed: {de}")
+                        if attempt < 3:
+                            time.sleep(2)
             
             # 2. Fallback to Gemini if DeepSeek was not used or failed
             if raw_ext is None:
