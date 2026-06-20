@@ -32,13 +32,7 @@ def call_gemini_api(system_prompt: str, prompt_text: str, api_key: str, model="g
         },
         "contents": [{
             "parts": [{"text": prompt_text}]
-        }],
-        "safetySettings": [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-        ]
+        }]
     }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
@@ -52,28 +46,13 @@ def call_gemini_api(system_prompt: str, prompt_text: str, api_key: str, model="g
         with opener.open(req) as response:
             res_body = response.read().decode("utf-8")
             res_json = json.loads(res_body)
-            if "candidates" in res_json and len(res_json["candidates"]) > 0:
-                candidate = res_json["candidates"][0]
-                if "content" in candidate and "parts" in candidate["content"] and len(candidate["content"]["parts"]) > 0:
-                    text = candidate["content"]["parts"][0].get("text", "")
-                    return text
-                else:
-                    finish_reason = candidate.get("finishReason", "UNKNOWN")
-                    raise RuntimeError(f"Gemini API returned no content. Finish reason: {finish_reason}. Full response: {res_json}")
+            if "candidates" in res_json:
+                text = res_json["candidates"][0]["content"]["parts"][0]["text"]
+                return text
             elif "error" in res_json:
                 raise RuntimeError(res_json["error"].get("message", "Unknown error"))
             else:
                 raise RuntimeError(f"Unexpected response structure: {res_json}")
-    except urllib.error.HTTPError as e:
-        error_info = e.read().decode("utf-8")
-        try:
-            err_json = json.loads(error_info)
-            if "error" in err_json:
-                err_msg = err_json["error"].get("message", "Unknown error")
-                raise RuntimeError(f"Gemini API HTTP Error {e.code}: {err_msg}")
-        except Exception:
-            pass
-        raise RuntimeError(f"Gemini API HTTP Error {e.code}: {error_info}")
     except Exception as e:
         raise RuntimeError(f"Gemini API Error: {e}")
 
@@ -170,99 +149,6 @@ def translate_lines_batch(lines_to_translate: list, api_key: str) -> list:
         results.append(translate_line(line, api_key))
     return results
 
-def sanitize_filename(name: str) -> str:
-    name = re.sub(r'[\\/*?:"<>|]', "", name)
-    name = re.sub(r'\s+', "_", name)
-    name = name.strip("_-.")
-    return name
-
-def thai_to_int(text: str) -> int | None:
-    ONES = {
-        'หนึ่ง': 1, 'เอ็ด': 1,
-        'สอง': 2, 'ยี่': 2,
-        'สาม': 3, 'สี่': 4, 'ห้า': 5,
-        'หก': 6, 'เจ็ด': 7, 'แปด': 8, 'เก้า': 9,
-    }
-    result = 0
-
-    m = re.match(r'^(หนึ่ง|สอง|สาม|สี่|ห้า|หก|เจ็ด|แปด|เก้า)พัน(.*)', text)
-    if m:
-        result += ONES[m.group(1)] * 1000
-        text = m.group(2)
-
-    m = re.match(r'^(หนึ่ง|สอง|สาม|สี่|ห้า|หก|เจ็ด|แปด|เก้า)ร้อย(.*)', text)
-    if m:
-        result += ONES[m.group(1)] * 100
-        text = m.group(2)
-
-    m = re.match(r'^(ยี่|สอง|สาม|สี่|ห้า|หก|เจ็ด|แปด|เก้า)?(สิบ)(.*)', text)
-    if m:
-        tens_prefix = m.group(1)
-        text = m.group(3)
-        result += 20 if tens_prefix == 'ยี่' else (ONES[tens_prefix] * 10 if tens_prefix else 10)
-
-    m = re.match(r'^(หนึ่ง|เอ็ด|สอง|สาม|สี่|ห้า|หก|เจ็ด|แปด|เก้า)', text)
-    if m:
-        result += ONES[m.group(1)]
-
-    return result if result > 0 else None
-
-def normalize_filename(filename: str) -> str:
-    m = re.match(r'^(\d{4})_(.*)', filename)
-    if not m:
-        return filename
-    running = m.group(1)
-    rest    = m.group(2)
-    m2 = re.match(r'^(บทที่|ตอนที่)[_\s]?([^_]+)(_.*)', rest)
-    if not m2:
-        return filename
-    prefix     = m2.group(1)
-    thai_num   = m2.group(2)
-    remainder  = m2.group(3)
-    if re.match(r'^\d+$', thai_num.strip()):
-        return f"{running}_{prefix} {thai_num.strip()}{remainder}"
-    num = thai_to_int(thai_num.strip())
-    if num is None:
-        return filename
-    return f"{running}_{prefix} {num}{remainder}"
-
-def translate_chinese_filenames(folder: str, api_key: str):
-    if not os.path.exists(folder):
-        return
-    files = sorted(os.listdir(folder))
-    for filename in files:
-        if has_chinese(filename):
-            print(f"[*] Found Chinese in filename: {filename}")
-            system_prompt = (
-                "You are an expert Chinese-to-Thai translator. Translate the Chinese text in the filename to natural, clean Thai. "
-                "The filename might contain chapter number and title, e.g. '第三百零九章：骑兵对决' -> 'บทที่ 309 การปะทะของทหารม้า'. "
-                "Ensure chapter numbers are converted to Arabic numerals (e.g. 309). "
-                "Replace spaces and colons with underscores to make it a safe filename. "
-                "Return ONLY the translated Thai filename without file extension, e.g. 'บทที่_309_การปะทะของทหารม้า'. "
-                "Do not include any notes, explanations, or quotes."
-            )
-            name_without_ext = os.path.splitext(filename)[0]
-            clean_part = re.sub(r'^\d{4}_(?:translated_)?', '', name_without_ext)
-            
-            try:
-                translated_part = call_gemini_api(system_prompt, clean_part, api_key, model="gemini-2.5-flash")
-                translated_part = translated_part.strip().strip("'\"` \t")
-                sanitized_part = sanitize_filename(translated_part)
-                match = re.match(r'^(\d{4})_', filename)
-                running_prefix = match.group(1) if match else "0000"
-                ext = os.path.splitext(filename)[1]
-                
-                new_filename = f"{running_prefix}_{sanitized_part}{ext}"
-                new_filename = normalize_filename(new_filename)
-                
-                old_path = os.path.join(folder, filename)
-                new_path = os.path.join(folder, new_filename)
-                
-                os.rename(old_path, new_path)
-                print(f"[✓] Translated filename: {filename} -> {new_filename}")
-            except Exception as e:
-                print(f"[!] Error translating filename {filename}: {e}")
-
 def main():
     api_key = get_gemini_api_key()
     if not api_key:
@@ -351,10 +237,6 @@ def main():
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(new_content)
         print(f"  [✓] Updated: {os.path.basename(filepath)}")
-        
-    # Phase 4: Translate any remaining Chinese filenames
-    print("\n[*] Phase 4: Checking and translating any remaining Chinese in filenames...")
-    translate_chinese_filenames(translate_dir, api_key)
         
     print("\n[✓] Global batch translation and cleanup finished successfully!")
 
