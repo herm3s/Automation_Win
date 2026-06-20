@@ -303,7 +303,8 @@ def parse_gemini_response(response_text: str):
                     if len(line_strip) < 100:
                         filename = line_strip
                     break
-            
+    return filename, content, glossary
+
 def collapse_repeating_punctuation(text: str) -> str:
     # Collapse 4 or more dots to three dots '...'
     text = re.sub(r'\.{4,}', '...', text)
