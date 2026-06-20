@@ -71,34 +71,55 @@ def thai_to_int(text: str) -> int | None:
 def normalize_filename(filename: str) -> str:
     """
     Input:  0033_บทที่หนึ่งร้อยสามสิบสอง_กล้าที่จะทำกับกล้าที่จะไม่ทำ.md
-    Output: 0033_บทที่ 132_กล้าที่จะทำกับกล้าที่จะไม่ทำ.md
+    Output: 0033_บทที่ 132: กล้าที่จะทำกับกล้าที่จะไม่ทำ.md
     """
-    # แยก: running_number _ ส่วนที่เหลือ
-    m = re.match(r'^(\d{4})_(.*)', filename)
+    # Use dash instead of colon on Windows to prevent invalid character OS errors
+    separator = " - " if os.name == 'nt' else ": "
+    
+    # Split filename and extension
+    name, ext = os.path.splitext(filename)
+    
+    # Match: running_number _ rest
+    m = re.match(r'^(\d{4})_(.*)', name)
     if not m:
-        return filename  # รูปแบบไม่ตรง → คืนเดิม
-
-    running = m.group(1)   # "0033"
-    rest    = m.group(2)   # "บทที่หนึ่งร้อยสามสิบสอง_กล้าที่จะทำกับกล้าที่จะไม่ทำ.md"
-
-    # หา prefix (บทที่/ตอนที่) + [_\s]? + ตัวเลขไทย/อารบิก + ส่วนที่เหลือ
-    m2 = re.match(r'^(บทที่|ตอนที่)[_\s]?([^_]+)(_.*)', rest)
-    if not m2:
-        return filename  # ไม่มี prefix → คืนเดิม
-
-    prefix     = m2.group(1)   # "บทที่"
-    thai_num   = m2.group(2)   # "หนึ่งร้อยสามสิบสอง"
-    remainder  = m2.group(3)   # "_กล้าที่จะทำกับกล้าที่จะไม่ทำ.md"
-
-    # ถ้าเป็นตัวเลขอารบิกอยู่แล้ว ไม่ต้องแปลง
-    if re.match(r'^\d+$', thai_num.strip()):
-        return f"{running}_{prefix} {thai_num.strip()}{remainder}"
-
-    num = thai_to_int(thai_num.strip())
-    if num is None:
-        return filename  # แปลงไม่ได้ → คืนเดิม
-
-    return f"{running}_{prefix} {num}{remainder}"
+        return filename
+        
+    running = m.group(1)
+    rest = m.group(2).strip()
+    
+    # Try to match standard pattern: (บทที่|ตอนที่) + number + delimiter + title
+    m2 = re.match(r'^(บทที่|ตอนที่)[_\s]?([^_:]+)[_\s:]+(.*)$', rest)
+    if m2:
+        prefix = m2.group(1)
+        thai_num = m2.group(2).strip()
+        title = m2.group(3).strip().strip("_-: ")
+        title = title.replace("_", " ")
+        
+        # Convert to Arabic numerals if it's not already
+        if re.match(r'^\d+$', thai_num):
+            num_str = thai_num
+        else:
+            num = thai_to_int(thai_num)
+            if num is not None:
+                num_str = str(num)
+            else:
+                num_str = thai_num
+                
+        return f"{running}_{prefix} {num_str}{separator}{title}{ext}"
+        
+    # Handle special chapters like prefaces, epilogues, side stories (番外)
+    special_prefixes = r'(บทนำ|คำนำ|ตอนพิเศษ|บทส่งท้าย|คำส่งท้าย|บทส่งท้าย|บทประเมิน|ประเมิน|เบื้องหลัง|番外[一二三四五六七八九十]|番外)'
+    m3 = re.match(fr'^({special_prefixes})[_\s:]+(.*)$', rest, re.IGNORECASE)
+    if m3:
+        prefix = m3.group(1)
+        title = m3.group(2).strip().strip("_-: ")
+        title = title.replace("_", " ")
+        prefix_clean = prefix.replace(":", "")
+        return f"{running}_{prefix_clean}{separator}{title}{ext}"
+        
+    # If no recognized pattern, just return running_rest clean
+    clean_rest = rest.replace("_", " ").strip()
+    return f"{running}_{clean_rest}{ext}"
 
 
 def rename_files(folder: str, dry_run: bool = True):
