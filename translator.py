@@ -698,27 +698,27 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
             
             raw_ext = None
             
-            # 1. Try Gemini first (if key is configured)
-            gemini_key = get_gemini_api_key()
-            if gemini_key and "your_gemini_api_key" not in gemini_key:
-                print(f"[*] Trying Gemini (gemini-2.5-flash) for glossary extraction ({len(user_prompt_extract)} chars)...")
+            # 1. Try DeepSeek first (if key is configured)
+            ds_key = os.getenv("DEEPSEEK_API_KEY")
+            if ds_key:
+                ds_model = model if ai == "deepseek" else "deepseek-v4-flash"
+                print(f"[*] Trying DeepSeek ({ds_model}) for glossary extraction ({len(user_prompt_extract)} chars)...")
                 try:
-                    raw_ext = call_gemini_api(system_prompt, user_prompt_extract, gemini_key, "gemini-2.5-flash")
-                except Exception as ge:
-                    print(f"[!] Gemini extraction failed or token limit reached: {ge}")
+                    raw_ext, _ = call_deepseek_api(system_prompt, user_prompt_extract, ds_key, ds_model)
+                except Exception as de:
+                    print(f"[!] DeepSeek extraction failed: {de}")
             
-            # 2. Fallback to DeepSeek if Gemini was not used or failed
+            # 2. Fallback to Gemini if DeepSeek was not used or failed
             if raw_ext is None:
-                ds_key = os.getenv("DEEPSEEK_API_KEY")
-                if ds_key:
-                    ds_model = model if ai == "deepseek" else "deepseek-v4-flash"
-                    print(f"[*] Falling back to DeepSeek ({ds_model}) for glossary extraction ({len(user_prompt_extract)} chars)...")
+                gemini_key = get_gemini_api_key()
+                if gemini_key and "your_gemini_api_key" not in gemini_key:
+                    print(f"[*] Falling back to Gemini (gemini-2.5-flash) for glossary extraction ({len(user_prompt_extract)} chars)...")
                     try:
-                        raw_ext, _ = call_deepseek_api(system_prompt, user_prompt_extract, ds_key, ds_model)
-                    except Exception as de:
-                        print(f"[!] DeepSeek extraction failed: {de}")
+                        raw_ext = call_gemini_api(system_prompt, user_prompt_extract, gemini_key, "gemini-2.5-flash")
+                    except Exception as ge:
+                        print(f"[!] Gemini extraction failed: {ge}")
                 else:
-                    print("[!] DEEPSEEK_API_KEY not set in .env for fallback.")
+                    print("[!] GEMINI_API_KEY not set in .env for fallback.")
 
             if raw_ext is None:
                 print("[!] Error: Glossary extraction failed on both Gemini and DeepSeek.")
