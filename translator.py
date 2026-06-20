@@ -525,6 +525,7 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
     Retries any failed chapters at the end of the pass before proceeding.
     """
     import time
+    start_time = time.time()
     global _api_opener
     import ssl
     ssl_context = ssl._create_unverified_context()
@@ -946,6 +947,10 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
         except Exception as e:
             print(f"[!] Error clearing {state_path}: {e}")
 
+    elapsed_time = time.time() - start_time
+    hours, rem = divmod(elapsed_time, 3600)
+    minutes, seconds = divmod(rem, 60)
+    print(f"\n[*] Total time elapsed: {int(hours)}h {int(minutes)}m {seconds:.2f}s")
     print("\n[*] Translation stage completed.")
 
 
