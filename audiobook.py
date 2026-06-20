@@ -310,7 +310,7 @@ def process_audiobooks(voice="th-TH-PremwadeeNeural", generate_videos=False, out
         
     return generated_mp3s
 
-def compile_audiobook_compilation(voice="th-TH-PremwadeeNeural", output_dir="."):
+def compile_audiobook_compilation(voice="th-TH-PremwadeeNeural", output_dir=".", limit=None):
     """
     Compiles all chapter MP3 files in the Audiobook directory into a single
     audiobook video, generating timestamps (timetrack.txt) for YouTube.
@@ -332,6 +332,9 @@ def compile_audiobook_compilation(voice="th-TH-PremwadeeNeural", output_dir=".")
         return
         
     mp3_files.sort()
+    if limit is not None:
+        mp3_files = mp3_files[:limit]
+        print(f"[*] Limiting audiobook compilation to the first {limit} chapters.")
     
     # Check if FFmpeg is available
     try:

@@ -143,6 +143,44 @@ def main():
         "--proxy", default=None,
         help="Use proxy for scraper (e.g. 'true' or custom proxy URL)"
     )
+    # 5. Translate-Audiobook Command (Stage 2 + 3)
+    ta_parser = subparsers.add_parser("translate-audiobook", help="Run Stage 2 (translate) and Stage 3 (audiobook) in one command")
+    ta_parser.add_argument(
+        "--ai", default="gemini", choices=["gemini", "deepseek", "deep seek", "deep-seek"],
+        help="AI translation provider to use (default: gemini)"
+    )
+    ta_parser.add_argument(
+        "--model", default=None,
+        help="Model name to use (default: gemini-2.5-flash for Gemini, deepseek-v4-flash for DeepSeek)"
+    )
+    ta_parser.add_argument(
+        "--voice", default="th-TH-NiwatNeural",
+        help="TTS Voice code (default: th-TH-NiwatNeural)"
+    )
+    ta_parser.add_argument(
+        "--no-video", action="store_true",
+        help="Skip generating individual MP4 videos, only produce MP3s"
+    )
+    ta_parser.add_argument(
+        "--combine", action="store_true", default=True,
+        help="Concatenate all MP3s into a single combined audiobook MP3 and render a combined video (default: True)"
+    )
+    ta_parser.add_argument(
+        "--no-combine", action="store_false", dest="combine",
+        help="Do not compile into a single combined audiobook"
+    )
+    ta_parser.add_argument(
+        "--option", default=".", 
+        help="Working directory path to save/read files (default: .)"
+    )
+    ta_parser.add_argument(
+        "--proxy", default=None,
+        help="Use proxy for translator and TTS"
+    )
+    ta_parser.add_argument(
+        "--limit", type=parse_limit, default=None,
+        help="Number of chapters to translate and process to audiobook"
+    )
     
     args = parser.parse_args()
     
@@ -166,7 +204,7 @@ def main():
         
         # If combine flag is set, compile them together into a single video
         if args.combine:
-            compile_audiobook_compilation(voice=args.voice, output_dir=args.option)
+            compile_audiobook_compilation(voice=args.voice, output_dir=args.option, limit=args.limit)
     elif args.command == "all":
         print("\n[*] --- STAGE 1: Scraping novel chapters ---")
         run_scraper(
@@ -186,8 +224,19 @@ def main():
         print("\n[*] --- STAGE 3: Generating audiobooks & video compilation ---")
         # Generate all MP3s first, then build the single compilation video
         process_audiobooks(voice=args.voice, generate_videos=False, output_dir=args.option, proxy=args.proxy, limit=args.limit)
-        compile_audiobook_compilation(voice=args.voice, output_dir=args.option)
+        compile_audiobook_compilation(voice=args.voice, output_dir=args.option, limit=args.limit)
         print("\n[✓] Complete pipeline executed successfully!")
+    elif args.command == "translate-audiobook":
+        print("\n[*] --- STAGE 2: Translating chapters ---")
+        ai_normalized = args.ai.lower().replace(" ", "").replace("-", "")
+        run_translation(model=args.model, ai=ai_normalized, output_dir=args.option, proxy=args.proxy, limit=args.limit)
+        
+        print("\n[*] --- STAGE 3: Generating audiobooks & video compilation ---")
+        # Generate all MP3s first, then build the single compilation video
+        process_audiobooks(voice=args.voice, generate_videos=False, output_dir=args.option, proxy=args.proxy, limit=args.limit)
+        if args.combine:
+            compile_audiobook_compilation(voice=args.voice, output_dir=args.option, limit=args.limit)
+        print("\n[✓] Translate and audiobook compilation executed successfully!")
     else:
         parser.print_help()
         sys.exit(1)
