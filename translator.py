@@ -518,7 +518,7 @@ def partition_files(files, batch_size=10, merge_threshold=4):
             i += batch_size
     return batches
 
-def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
+def run_translation(model=None, ai="gemini", output_dir=".", proxy=None, limit=None):
     """
     Scans the specified folder for untranslated scraped markdown files,
     translates them using Gemini or DeepSeek, saves the translations, and moves the originals to done/
@@ -652,6 +652,9 @@ def run_translation(model=None, ai="gemini", output_dir=".", proxy=None):
         if re.match(r"^\d{4}_", basename) and basename != "gemini.md":
             scraped_files.append(f)
     scraped_files.sort()
+    if limit is not None:
+        scraped_files = scraped_files[:limit]
+        print(f"[*] Limiting translation run to {limit} files.")
 
     # 3. Combine content of all files to be translated to filter terms
     combined_all_content = ""

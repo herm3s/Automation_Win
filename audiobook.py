@@ -150,7 +150,7 @@ def format_seconds_to_hms(seconds: float) -> str:
     secs = s % 60
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
-def process_audiobooks(voice="th-TH-PremwadeeNeural", generate_videos=False, output_dir=".", proxy=None):
+def process_audiobooks(voice="th-TH-PremwadeeNeural", generate_videos=False, output_dir=".", proxy=None, limit=None):
     """
     Pipeline Step 3:
     - Finds all translated markdown files (000X_*.md in translate/ folder).
@@ -218,6 +218,10 @@ def process_audiobooks(voice="th-TH-PremwadeeNeural", generate_videos=False, out
             break
             
         translated_files.sort()
+        if limit is not None:
+            translated_files = translated_files[:limit]
+            if pass_count == 1:
+                print(f"[*] Limiting audiobook processing to {limit} files.")
         total_files = len(translated_files)
         
         if pass_count > 1:

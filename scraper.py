@@ -152,7 +152,8 @@ def run_scraper(start_url, load_limit, title_selector=None, content_selector=Non
     Main entry point to run the Playwright scraper sequential loop.
     """
     print(f"[*] Starting scraper at: {start_url}")
-    print(f"[*] Chapters to load: {load_limit}")
+    limit_str = "unlimited" if load_limit is None else str(load_limit)
+    print(f"[*] Chapters to load: {limit_str}")
     print(f"[*] Output directory: {output_dir}")
     
     # Ensure directory exists
@@ -177,7 +178,7 @@ def run_scraper(start_url, load_limit, title_selector=None, content_selector=Non
         current_url = start_url
         chapters_scraped = 0
         
-        while current_url and chapters_scraped < load_limit:
+        while current_url and (load_limit is None or chapters_scraped < load_limit):
             progress = draw_progress_bar(chapters_scraped + 1, load_limit)
             print(f"\n[+] Loading page {progress}: {current_url}")
             try:

@@ -97,13 +97,13 @@ def sanitize_filename(name: str) -> str:
     name = name.strip("_-.")
     return name
 
-def draw_progress_bar(current: int, total: int, width: int = 30) -> str:
+def draw_progress_bar(current: int, total: int | None, width: int = 30) -> str:
     """
     Generates a text-based progress bar.
     Example: [██████░░░░] 60% (3/5)
     """
-    if total <= 0:
-        return ""
+    if total is None or total <= 0:
+        return f"({current}/∞)"
     percent = float(current) / float(total)
     filled_width = int(width * percent)
     bar = "█" * filled_width + "░" * (width - filled_width)
